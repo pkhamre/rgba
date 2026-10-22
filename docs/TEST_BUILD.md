@@ -80,8 +80,10 @@ xvfb-run -a sh scripts/play.sh --scale 1 --frames 120
 - Supplied Emerald runs 4,000 frames with scripted Start/A presses and renders
   Professor Birch's “Hi! Sorry to keep you waiting!” new-game dialogue.
 - Xvfb desktop smoke: window maps, injected F12 produces a screenshot, and
-  paused X11 window pixels match the core framebuffer byte-for-byte. Interactive
-  options/state/keybinding checks are covered by `scripts/validate_desktop.py`.
+  paused X11 window pixels match the core framebuffer byte-for-byte. The
+  6,000-frame `scripts/validate_desktop.py` run passed interactive menu
+  save/load/resume, speed choices, duplicate-key rejection, persistent binding
+  reload, F6/F7, and explicit Exit. It used audio off and an isolated save.
 - A controlled 115,200-frame real-time desktop soak completed in 32 minutes
   19.5 seconds with zero core/host audio queue drops, unchanged save data,
   and stable sampled RSS. This used the earlier audio-buffer limit; the latest

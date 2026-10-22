@@ -134,8 +134,9 @@ and the first battle succeeded in user testing. A controlled real-time desktop
 soak passed; varied human gameplay/listening and hardware/reference validation
 remain open. The agreed desktop-options follow-up is in implementation: core/host
 state persistence, settings storage, keybinding/menu models, and desktop event-loop
-integration are implemented. Standard checks pass; the isolated Xvfb interactive
-acceptance run remains to be completed.
+integration are implemented. Standard checks and the isolated 6,000-frame Xvfb
+interactive acceptance run pass. Physical hardware, varied gameplay, and real-device
+audio validation remain open.
 
 ## Work policy
 

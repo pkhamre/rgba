@@ -4,8 +4,9 @@ pub(crate) const USAGE: &str = "\
 gba-desktop --bios PATH --rom PATH [--save PATH] [--scale 1..6] [--frames COUNT] [--audio auto|pipewire|pulse|alsa|off]
 Linux X11/XWayland preview. Audio needs pw-cat, pacat, or aplay installed.
 Controls: arrows/WASD = D-pad; Z = A; X = B; Enter = Start; Backspace = Select;
-Q/E = L/R; Space = pause; Tab = fast forward; F5 = flush save; F12 = screenshot;
-Escape or window close = quit and flush save.
+Q/E = L/R; Space = pause; Tab = fast forward; F5 = flush save;
+F6/F7 = quick state save/load; F12 = screenshot; Escape = options menu.
+Choose Exit or close the window to quit and flush cartridge data.
 Save defaults to ROM basename.sav; previous backup is kept in .sav.bak.
 --frames exits after a bounded number of frames (useful for Xvfb smoke tests).";
 

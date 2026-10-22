@@ -77,7 +77,7 @@ class X11:
         self.x.XFlush(self.display)
 
     def tap(self,symbol):
-        self.key(symbol,True);time.sleep(.15);self.key(symbol,False)
+        self.key(symbol,True);time.sleep(.15);self.key(symbol,False);time.sleep(.01)
 
     def title(self):
         name=C.c_char_p();self.x.XFetchName(self.display,self.window,C.byref(name))
@@ -120,6 +120,9 @@ def artifact_executable(output):
 
 
 def validate(args):
+    def speed_row(image):
+        return b"".join(image[y*240*3+48*3:y*240*3+108*3] for y in range(73,80))
+
     output=args.output.resolve();save_source=args.save.resolve()
     original=save_source.read_bytes()
     if len(original)!=131072:raise ValueError("requires an existing 128 KiB Emerald save")
@@ -137,7 +140,7 @@ def validate(args):
                 isolated_rom_sha256=hashlib.sha256(rom_copy.read_bytes()).hexdigest(),
                 save_sha256=hashlib.sha256(original).hexdigest(),max_rss_kib=0,
                 binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest())
-    start=time.monotonic();process=None;display=None
+    start=time.monotonic();process=None;exit_process=None;display=None
     try:
         with log_path.open("x") as log:
             process=subprocess.Popen([str(binary),"--bios",str(args.bios.resolve()),"--rom",str(rom_copy.resolve()),
@@ -162,9 +165,22 @@ def validate(args):
                     if not (output/"game.state").is_file():raise AssertionError("Save State menu action failed")
                     display.tap(0xff54);display.tap(0xff0d);time.sleep(.2)
                     if b"OPTIONS" not in display.title():raise AssertionError("Load State left options menu")
+                    display.tap(0xff54);display.tap(0xff0d)
+                    speed_2=display.snapshot(args.scale)
+                    display.tap(0xff53);speed_4=display.snapshot(args.scale)
+                    display.tap(0xff53);speed_1=display.snapshot(args.scale)
+                    if len({speed_1,speed_2,speed_4})!=3:raise AssertionError("speed menu choices were not distinct")
+                    display.tap(0xff0d);persisted_speed=display.snapshot(args.scale)
+                    display.tap(0xff1b);time.sleep(.2)
+                    display.tap(0xff1b)
+                    display.tap(0xff54);display.tap(0xff54)
+                    reopened_speed=display.snapshot(args.scale)
+                    if speed_row(persisted_speed)!=speed_row(reopened_speed):raise AssertionError("speed choice did not persist after closing the menu")
                     display.tap(0xff1b);time.sleep(.2)
                     if b"OPTIONS" in display.title():raise AssertionError("Escape did not resume gameplay")
                     menu_tested=True;report["options_save_load_resume_tested"]=True
+                    report["speed_options_tested"]=True
+                    report["speed_persists_after_resume"]=True
                 if not bindings_tested and elapsed>=3:
                     display.tap(0xff1b)
                     for _ in range(3):display.tap(0xff54)
@@ -230,9 +246,33 @@ def validate(args):
         if (report["completed_frames"]!=args.frames or not paused or not report["save_unchanged"]
                 or not menu_tested or not bindings_tested or not state_hotkeys_tested):
             raise AssertionError("frame/pause/save/options invariant failed")
+        exit_log_path=output/"exit-test.log"
+        with exit_log_path.open("x") as exit_log:
+            exit_process=subprocess.Popen([str(binary),"--bios",str(args.bios.resolve()),"--rom",str(rom_copy.resolve()),
+                                           "--save",str(save),"--scale",str(args.scale),"--audio","off","--frames",str(args.frames)],
+                                          env=env,cwd=ROOT,stdout=exit_log,stderr=subprocess.STDOUT)
+            display.window=None
+            for _ in range(100):
+                if display.find_window(exit_process.pid):break
+                time.sleep(.1)
+            if not display.window:raise RuntimeError("exit-test window did not map")
+            display.tap(0x6d)
+            if b"OPTIONS" not in display.title():raise AssertionError("saved menu binding did not reload")
+            for _ in range(4):display.tap(0xff54)
+            display.key(0xff0d,True);display.key(0xff0d,False)
+            try:exit_status=exit_process.wait(timeout=10)
+            except subprocess.TimeoutExpired as error:raise AssertionError("explicit Exit did not close the window") from error
+            if exit_status!=0:raise RuntimeError("explicit Exit process failed; inspect exit-test.log")
+        exit_text=exit_log_path.read_text()
+        exit_match=re.search(r"Completed frames=(\d+)",exit_text)
+        if not exit_match or int(exit_match[1])>=args.frames:raise AssertionError("explicit Exit did not stop the bounded run")
+        report.update(settings_reloaded=True,explicit_exit_tested=True,exit_frames=int(exit_match[1]),
+                      exit_save_unchanged=save.read_bytes()==original)
+        if not report["exit_save_unchanged"]:raise AssertionError("explicit Exit changed the isolated save")
     except BaseException as error:
         report.update(status="failed",error=repr(error))
         if process and process.poll() is None:process.kill();process.wait()
+        if exit_process and exit_process.poll() is None:exit_process.kill();exit_process.wait()
         raise
     finally:
         if display:display.close()

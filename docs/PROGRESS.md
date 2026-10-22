@@ -89,14 +89,16 @@ capture, full hardware-test-ROM execution, reference video/audio comparison, or
 speaker listening test here. The controlled soak is not a varied 30-minute human
 playthrough, and performance on the user's host is not certified.
 
-The options/state implementation now has unit coverage for state encoding,
-ROM binding and corruption rejection; atomic Session slots and cartridge-save
-sync; settings round trips and duplicate rejection; menu navigation/capture;
-and host-only overlays. `scripts/validate_desktop.py` now includes disposable-ROM
-interactive checks for menu save/load/resume, persistent keybindings, and
-F6/F7. The explicit Exit action has menu-model unit coverage. That expanded
-Xvfb run has not yet been executed in this environment.
+The options/state implementation has unit coverage for state encoding, ROM
+binding and corruption rejection; atomic Session slots and cartridge-save sync;
+settings round trips and duplicate rejection; menu navigation/capture; and
+host-only overlays. `scripts/validate_desktop.py` passed its isolated-ROM Xvfb
+acceptance run at scale 3: 6,000 frames / 99.736 emulated seconds in 82.745
+wall seconds. The run exercised menu state save/load/resume, all three speed
+choices and persistence after closing the menu, duplicate-key rejection,
+keybinding persistence/reload, F6/F7, and explicit Exit at frame 4 of a second
+launch. Both isolated cartridge-save checks were unchanged. Audio was disabled;
+this is not audio-device evidence.
 
-Next: run the interactive acceptance test where Xvfb is available, then continue
-hardware-backed CPU/bus/device/audio tests, reference captures, real-device
+Next: hardware-backed CPU/bus/device/audio tests, reference captures, real-device
 listening/latency checks, and broader gameplay validation.
