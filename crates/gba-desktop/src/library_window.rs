@@ -2,6 +2,8 @@
 
 use crate::arguments::Arguments;
 use crate::game_library::Game;
+use crate::gamepad::{GamepadBindings, GamepadInput};
+use crate::keybindings::Action;
 use crate::menu::draw_text;
 use crate::presentation::Presentation;
 use std::error::Error;
@@ -18,7 +20,11 @@ use x11rb::protocol::xproto::{
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as WrapperConnectionExt;
 
-pub(crate) fn choose(args: &Arguments, games: &[Game]) -> Result<Option<Game>, Box<dyn Error>> {
+pub(crate) fn choose(
+    args: &Arguments,
+    games: &[Game],
+    gamepad: &mut GamepadInput,
+) -> Result<Option<Game>, Box<dyn Error>> {
     let (connection, screen_number) = RustConnection::connect(None).map_err(|error| {
         io::Error::other(format!("cannot open X11 display for game library: {error}"))
     })?;
@@ -123,7 +129,24 @@ pub(crate) fn choose(args: &Arguments, games: &[Game]) -> Result<Option<Game>, B
     let mut selected = 0usize;
     let mut result = None;
     let mut running = true;
+    let gamepad_bindings = GamepadBindings::default();
+    gamepad.suppress_held(&gamepad_bindings);
     while running {
+        let gamepad_poll = gamepad.poll(&gamepad_bindings);
+        for action in gamepad_poll.pressed_actions {
+            match selection_action(action, selected, games.len()) {
+                Some(SelectionAction::Move(index)) => selected = index,
+                Some(SelectionAction::Select(index)) => {
+                    result = games.get(index).cloned();
+                    running = false;
+                }
+                Some(SelectionAction::Cancel) => running = false,
+                None => {}
+            }
+        }
+        if !running {
+            break;
+        }
         draw_library(
             &connection,
             gc,
@@ -181,6 +204,9 @@ pub(crate) fn choose(args: &Arguments, games: &[Game]) -> Result<Option<Game>, B
     connection.free_gc(gc)?;
     connection.destroy_window(window)?;
     connection.flush()?;
+    if result.is_some() {
+        gamepad.suppress_held(&gamepad_bindings);
+    }
     Ok(result)
 }
 
@@ -242,7 +268,7 @@ fn library_pixels(games: &[Game], selected: usize) -> Vec<u32> {
         draw_text(&mut pixels, 58, 52, "NO GAMES FOUND", 0xffd060);
         draw_text(&mut pixels, 22, 76, "COPY ROMS TO GAMES FOLDER", 0xffffff);
         draw_text(&mut pixels, 42, 92, "RESTART TO RESCAN", 0x90a0b0);
-        draw_text(&mut pixels, 66, 132, "ESC TO EXIT", 0x90a0b0);
+        draw_text(&mut pixels, 66, 128, "B OR ESC TO EXIT", 0x90a0b0);
         return pixels;
     }
     const VISIBLE_GAMES: usize = 5;
@@ -261,8 +287,28 @@ fn library_pixels(games: &[Game], selected: usize) -> Vec<u32> {
         draw_text(&mut pixels, 25, y, &first_line, color);
         draw_text(&mut pixels, 25, y + 9, &second_line, color);
     }
-    draw_text(&mut pixels, 26, 145, "UP DOWN MOVE  ENTER LOAD", 0x90a0b0);
+    draw_text(&mut pixels, 28, 136, "UP DOWN MOVE  A LOAD", 0x90a0b0);
+    draw_text(&mut pixels, 72, 148, "B OR ESC BACK", 0x90a0b0);
     pixels
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SelectionAction {
+    Move(usize),
+    Select(usize),
+    Cancel,
+}
+
+fn selection_action(action: Action, selected: usize, game_count: usize) -> Option<SelectionAction> {
+    match action {
+        Action::Up if game_count > 0 => Some(SelectionAction::Move(
+            (selected + game_count - 1) % game_count,
+        )),
+        Action::Down if game_count > 0 => Some(SelectionAction::Move((selected + 1) % game_count)),
+        Action::A | Action::Start if game_count > 0 => Some(SelectionAction::Select(selected)),
+        Action::B => Some(SelectionAction::Cancel),
+        _ => None,
+    }
 }
 
 fn title_lines(title: &str) -> (String, String) {
@@ -305,7 +351,9 @@ fn key_symbol(code: usize, minimum: u8, columns: usize, symbols: &[u32]) -> u32 
 
 #[cfg(test)]
 mod tests {
+    use super::{SelectionAction, selection_action};
     use crate::game_library::Game;
+    use crate::keybindings::Action;
 
     #[test]
     fn empty_library_screen_explains_how_to_populate_it() {
@@ -327,6 +375,27 @@ mod tests {
         assert_eq!(first.len(), 32);
         assert_eq!(second.len(), 32);
         assert!(second.ends_with("..."));
+    }
+
+    #[test]
+    fn gamepad_actions_navigate_launch_and_cancel_the_library() {
+        assert_eq!(
+            selection_action(Action::Up, 0, 2),
+            Some(SelectionAction::Move(1))
+        );
+        assert_eq!(
+            selection_action(Action::Down, 1, 2),
+            Some(SelectionAction::Move(0))
+        );
+        assert_eq!(
+            selection_action(Action::A, 1, 2),
+            Some(SelectionAction::Select(1))
+        );
+        assert_eq!(
+            selection_action(Action::B, 0, 0),
+            Some(SelectionAction::Cancel)
+        );
+        assert_eq!(selection_action(Action::A, 0, 0), None);
     }
 
     #[test]

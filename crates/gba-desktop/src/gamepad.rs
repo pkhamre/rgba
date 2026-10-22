@@ -341,8 +341,10 @@ impl GamepadInput {
         }
     }
 
-    pub(crate) fn suppress_held(&mut self) {
-        self.suppressed_buttons |= self.previous_mask;
+    pub(crate) fn suppress_held(&mut self, bindings: &GamepadBindings) {
+        let current = bindings.mask(&self.pressed_keys, &self.axes, &self.axis_ranges);
+        self.suppressed_buttons |= current;
+        self.previous_mask = current;
     }
 
     fn discover(&mut self) {
@@ -520,8 +522,8 @@ fn control_name(control: GamepadControl) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        GamepadBindings, GamepadControl, action_index, bit, control_active, decode_settings,
-        encode_settings,
+        GamepadBindings, GamepadControl, GamepadInput, action_index, bit, control_active,
+        decode_settings, encode_settings,
     };
     use crate::keybindings::{Action, KeyBindings};
     use evdev::{AbsoluteAxisCode, KeyCode};
@@ -563,6 +565,21 @@ mod tests {
             decode_settings(&keyboard.encode()).expect("legacy settings are valid"),
             (keyboard, GamepadBindings::default())
         );
+    }
+
+    #[test]
+    fn held_library_input_is_suppressed_using_the_game_bindings() {
+        let mut input = GamepadInput::new();
+        input.pressed_keys.insert(KeyCode::BTN_SOUTH.code());
+        let mut bindings = GamepadBindings::default();
+        bindings
+            .rebind(Action::A, GamepadControl::Key(KeyCode::BTN_NORTH.code()))
+            .expect("north button is free");
+        bindings
+            .rebind(Action::B, GamepadControl::Key(KeyCode::BTN_SOUTH.code()))
+            .expect("south button is now free");
+        input.suppress_held(&bindings);
+        assert_eq!(input.suppressed_buttons, bit(Action::B));
     }
 
     #[test]

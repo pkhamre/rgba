@@ -35,6 +35,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     let storage = crate::game_library::StoragePaths::from_env()?;
     storage.create()?;
     let mut games = crate::game_library::scan(&storage)?;
+    let mut gamepad = crate::gamepad::GamepadInput::new();
     let explicit_game = args
         .rom
         .as_deref()
@@ -50,7 +51,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     } else if games.len() == 1 {
         games.first().cloned()
     } else {
-        crate::library_window::choose(&args, &games)?
+        crate::library_window::choose(&args, &games, &mut gamepad)?
     };
 
     while let Some(game) = selected {
@@ -83,7 +84,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         session
             .machine_mut()
             .set_rtc_timestamp(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs());
-        let outcome = run_window(&args, &mut session);
+        let outcome = run_window(&args, &mut session, &mut gamepad);
         if let Err(error) = session.flush_save() {
             eprintln!("Save failed on exit; unsaved progress could not be persisted: {error}");
             return Err(error.into());
@@ -95,7 +96,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                 if !games.iter().any(|known| known.identity == game.identity) {
                     games.push(game);
                 }
-                selected = crate::library_window::choose(&args, &games)?;
+                selected = crate::library_window::choose(&args, &games, &mut gamepad)?;
             }
         }
     }
@@ -107,7 +108,11 @@ enum RunOutcome {
     Library,
 }
 
-fn run_window(args: &Arguments, session: &mut Session) -> Result<RunOutcome, Box<dyn Error>> {
+fn run_window(
+    args: &Arguments,
+    session: &mut Session,
+    gamepad: &mut crate::gamepad::GamepadInput,
+) -> Result<RunOutcome, Box<dyn Error>> {
     let (connection, screen_number) = RustConnection::connect(None).map_err(|error| {
         io::Error::other(format!("cannot open X11 display: {error}. Run in an X11/XWayland desktop, or use gba-headless --frames ... --screenshot ..."))
     })?;
@@ -278,7 +283,7 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<RunOutcome, Box
     }
     let mut menu = MenuState::default();
     let mut menu_open = false;
-    let mut gamepad = crate::gamepad::GamepadInput::new();
+    gamepad.suppress_held(&gamepad_bindings);
     let mut state_notice = None;
     let mut held = [false; 256];
     let mut paused = false;
@@ -345,7 +350,7 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<RunOutcome, Box
                                 title: &title,
                                 session,
                                 audio: &mut audio,
-                                gamepad: &mut gamepad,
+                                gamepad,
                                 gamepad_bindings: &mut gamepad_bindings,
                                 menu: &mut menu,
                                 bindings: &mut bindings,
@@ -466,7 +471,7 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<RunOutcome, Box
                         title: &title,
                         session,
                         audio: &mut audio,
-                        gamepad: &mut gamepad,
+                        gamepad,
                         gamepad_bindings: &mut gamepad_bindings,
                         menu: &mut menu,
                         bindings: &mut bindings,
@@ -498,7 +503,7 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<RunOutcome, Box
                         title: &title,
                         session,
                         audio: &mut audio,
-                        gamepad: &mut gamepad,
+                        gamepad,
                         gamepad_bindings: &mut gamepad_bindings,
                         menu: &mut menu,
                         bindings: &mut bindings,
@@ -721,7 +726,7 @@ fn handle_menu_command(runtime: MenuRuntime<'_>, command: Command) -> Result<(),
         Command::Resume => {
             *runtime.menu_open = false;
             runtime.held.fill(false);
-            runtime.gamepad.suppress_held();
+            runtime.gamepad.suppress_held(runtime.gamepad_bindings);
             set_window_title(
                 runtime.connection,
                 runtime.window,
@@ -734,6 +739,7 @@ fn handle_menu_command(runtime: MenuRuntime<'_>, command: Command) -> Result<(),
         }
         Command::BackToLibrary => {
             if flush_save(runtime.session) {
+                runtime.gamepad.suppress_held(runtime.gamepad_bindings);
                 *runtime.return_to_library = true;
                 *runtime.running = false;
             } else {

@@ -6,7 +6,7 @@ Pinned Rust workspace, Google Rust style, safe-Rust/public-doc lints, synthetic
 CI checks, licensed reference preparation, and small logical commits are in
 place. Local debug/release checks pass; GitHub Actions was not run here.
 
-Standard result: **168 Rust tests pass (including one doctest), 3 are ignored,
+Standard result: **170 Rust tests pass (including one doctest), 3 are ignored,
 and 23 Python tests pass**. Both external tests remain optional/ignored by
 default.
 The isolated mGBA baseline passes 235/235 cases. Strict CPU comparison still
@@ -38,9 +38,10 @@ Implemented:
 - ROM-specific key remapping for all GBA and emulator actions, duplicate-key
   rejection, settings persistence, and F6/F7 quick state hotkeys. Defaults keep
   existing controls; Escape now opens the menu instead of quitting.
-- Linux evdev gamepad input with automatic discovery/hotplug, configurable
-  per-game controller bindings in a separate PAD KEYBINDS menu page, plus D-pad and
-  left-stick defaults and Start + Select to open the menu.
+- Linux evdev gamepad input with automatic discovery/hotplug, library chooser
+  navigation, configurable per-game controller bindings in a separate PAD
+  KEYBINDS menu page, D-pad and left-stick defaults, and Start + Select to open
+  the in-game menu.
 - Visible host-only PAUSED panel and title indicator; guest pixels/state are
   not modified. Paused window stability is tested under Xvfb.
 - Clocked square/sweep/envelope, wave/noise PSG, real timer-fed Direct Sound
@@ -72,9 +73,10 @@ Implemented:
   desktop repeat: 3,291,750 PCM frames, zero drops, pause checks and save intact.
   Do not attribute the older long run to the newer buffer configuration.
 - Gamepad defaults, binding capture/duplicates, settings persistence and legacy
-  keyboard-settings loading, stick deadzone, and menu navigation have unit
-  coverage. The updated menu also passed the 6,000-frame Xvfb desktop check at
-  scale 1 with audio off; that run did not exercise controller capture. This
+  keyboard-settings loading, stick deadzone, library chooser navigation, and
+  in-game menu navigation have unit coverage. The updated menu also passed a
+  6,000-frame Xvfb desktop check at scale 1 with audio off; that run did not
+  exercise controller capture. This
   environment has no `/dev/input`, so physical 8BitDo USB operation remains
   unverified and should be checked on the user's machine.
 

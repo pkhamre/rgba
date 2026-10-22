@@ -36,8 +36,10 @@ Hold Tab through boot/intro if desired; use Enter at the title and Z to confirm.
 USB gamepads are detected through Linux evdev when the emulator starts, and
 newly connected pads are detected while it is running. The D-pad and left stick
 control movement; the bottom face button maps to GBA A, the right face button
-to B, and the left/right shoulder buttons to L/R. Start + Select opens the
-options menu; use the D-pad to navigate, A/Start to select, and B to go back.
+to B, and the left/right shoulder buttons to L/R. In the game library, use
+Up/Down to choose a game, A/Start to launch, and B to exit. During gameplay,
+Start + Select opens the options menu; use the D-pad to navigate, A/Start to
+select, and B to go back.
 Choose **PAD KEYBINDS** to select a GBA action and press the controller button or
 move the stick/D-pad to assign it; Escape cancels, and Reset Defaults restores
 the original layout. Keyboard bindings remain separate. The current
