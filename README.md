@@ -14,19 +14,28 @@ From a Linux X11 desktop, or Wayland desktop with XWayland:
 sh scripts/play.sh
 ```
 
-This uses your existing `bins/gba_bios.bin` and
-`bins/Pokemon - Emerald Version (USA, Europe).gba`. No images are bundled.
-You can select another ROM: `sh scripts/play.sh path/to/game.gba --scale 2`.
+The BIOS is read from `bins/gba_bios.bin`; no game images are bundled. With no
+`--rom` argument, the desktop scans `$XDG_DATA_HOME/rgba/games` (default
+`~/.local/share/rgba/games`), starts its only game automatically, or shows a
+game chooser when there are multiple games. Put `.gba`, `.agb`, or `.bin` ROMs
+directly in that folder. To launch a ROM directly instead:
+`sh scripts/play.sh path/to/game.gba --scale 2`.
 
 Controls: arrows/WASD = D-pad; Z/X = A/B; Enter = Start; Backspace = Select;
 Q/E = L/R. Space pauses; Tab fast-forwards. F5 flushes the cartridge save,
 F6/F7 save/load a machine state, and F12 captures a PPM screenshot. Escape opens
-the options menu; choose Exit or close the window to quit and flush saves.
-The menu configures bindings. State saves and loads show a brief on-screen result notice.
+the options menu; choose Back to Library to switch games after flushing the
+cartridge save, or Exit to quit. The menu configures bindings. State saves and
+loads show a brief on-screen result notice.
 Hold Tab through boot/intro if desired; use Enter at the title and Z to confirm.
 
-Save data defaults to the ROM's `.sav` file; previous data is kept in
-`.sav.bak`. Use the game's save menu first: F5 is not an emulator save state.
+Saves and states are stored under `$XDG_DATA_HOME/rgba` (default
+`~/.local/share/rgba`); settings are under `$XDG_CONFIG_HOME/rgba` (default
+`~/.config/rgba`). Per-game filenames use the ROM's SHA-256 identity. ROM-side saves, states, and settings are copied on first launch and retained;
+existing central files win conflicts. To migrate files beside a ROM outside the
+games folder, launch that original path once before adding its ROM to the folder,
+or copy the sidecars alongside it. Use the game's save menu first: F5 is not an
+emulator save state.
 See [docs/TEST_BUILD.md](docs/TEST_BUILD.md) for launch options, RTC/save policy,
 verified behavior, and limitations.
 

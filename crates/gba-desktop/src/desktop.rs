@@ -30,19 +30,82 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             format!("{message}\n{}", arguments::USAGE),
         )
     })?;
-    let mut session = Session::try_new(&args.bios, &args.rom, args.save.as_deref())?;
-    session
-        .machine_mut()
-        .set_rtc_timestamp(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs());
-    let outcome = run_window(&args, &mut session);
-    if let Err(error) = session.flush_save() {
-        eprintln!("Save failed on exit; unsaved progress could not be persisted: {error}");
-        return Err(error.into());
+    let storage = crate::game_library::StoragePaths::from_env()?;
+    storage.create()?;
+    let mut games = crate::game_library::scan(&storage)?;
+    let explicit_game = args
+        .rom
+        .as_deref()
+        .map(crate::game_library::game_from_path)
+        .transpose()?;
+    let custom_save_identity = args
+        .save
+        .as_ref()
+        .and(explicit_game.as_ref())
+        .map(|game| game.identity);
+    let mut selected = if let Some(game) = explicit_game.clone() {
+        Some(game)
+    } else if games.len() == 1 {
+        games.first().cloned()
+    } else {
+        crate::library_window::choose(&args, &games)?
+    };
+
+    while let Some(game) = selected {
+        if !games.iter().any(|known| known.identity == game.identity) {
+            games.push(game.clone());
+        }
+        let migration = crate::game_library::migrate_legacy(&game.path, &game.identity, &storage)?;
+        for conflict in migration.conflicts {
+            eprintln!(
+                "Keeping existing central data; legacy file was not copied: {}",
+                conflict.display()
+            );
+        }
+        let save_path = if custom_save_identity == Some(game.identity) {
+            args.save
+                .clone()
+                .unwrap_or_else(|| storage.save_path(&game.identity))
+        } else {
+            storage.save_path(&game.identity)
+        };
+        let state_path = storage.state_path(&game.identity);
+        let settings_path = storage.settings_path(&game.identity);
+        let mut session = Session::try_new_with_paths(
+            &args.bios,
+            &game.path,
+            &save_path,
+            &state_path,
+            &settings_path,
+        )?;
+        session
+            .machine_mut()
+            .set_rtc_timestamp(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs());
+        let outcome = run_window(&args, &mut session);
+        if let Err(error) = session.flush_save() {
+            eprintln!("Save failed on exit; unsaved progress could not be persisted: {error}");
+            return Err(error.into());
+        }
+        match outcome? {
+            RunOutcome::Exit => return Ok(()),
+            RunOutcome::Library => {
+                games = crate::game_library::scan(&storage)?;
+                if !games.iter().any(|known| known.identity == game.identity) {
+                    games.push(game);
+                }
+                selected = crate::library_window::choose(&args, &games)?;
+            }
+        }
     }
-    outcome
+    Ok(())
 }
 
-fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Error>> {
+enum RunOutcome {
+    Exit,
+    Library,
+}
+
+fn run_window(args: &Arguments, session: &mut Session) -> Result<RunOutcome, Box<dyn Error>> {
     let (connection, screen_number) = RustConnection::connect(None).map_err(|error| {
         io::Error::other(format!("cannot open X11 display: {error}. Run in an X11/XWayland desktop, or use gba-headless --frames ... --screenshot ..."))
     })?;
@@ -214,6 +277,7 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
     let mut paused = false;
     let mut fast = false;
     let mut running = true;
+    let mut return_to_library = false;
     let mut frame_count = 0u64;
     let mut emulation_work = Duration::ZERO;
     let mut max_emulation_work = Duration::ZERO;
@@ -267,6 +331,14 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
                                     false,
                                     paused,
                                 )?;
+                            }
+                            crate::menu::Command::BackToLibrary => {
+                                if flush_save(session) {
+                                    return_to_library = true;
+                                    running = false;
+                                } else {
+                                    menu.set_status("SAVE FAILED - SWITCH CANCELLED");
+                                }
                             }
                             crate::menu::Command::Exit => {
                                 if flush_save(session) {
@@ -550,7 +622,11 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
     presentation.close(&connection)?;
     connection.free_gc(gc)?;
     connection.flush()?;
-    Ok(())
+    Ok(if return_to_library {
+        RunOutcome::Library
+    } else {
+        RunOutcome::Exit
+    })
 }
 
 fn set_window_title(

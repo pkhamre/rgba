@@ -1,19 +1,22 @@
 use std::path::PathBuf;
 
 pub(crate) const USAGE: &str = "\
-gba-desktop --bios PATH --rom PATH [--save PATH] [--scale 1..6] [--frames COUNT] [--audio auto|pipewire|pulse|alsa|off]
+gba-desktop --bios PATH [--rom PATH] [--save PATH] [--scale 1..6] [--frames COUNT] [--audio auto|pipewire|pulse|alsa|off]
 Linux X11/XWayland preview. Audio needs pw-cat, pacat, or aplay installed.
 Controls: arrows/WASD = D-pad; Z = A; X = B; Enter = Start; Backspace = Select;
 Q/E = L/R; Space = pause; Tab = fast forward; F5 = flush save;
 F6/F7 = quick state save/load; F12 = screenshot; Escape = options menu.
-Choose Exit or close the window to quit and flush cartridge data.
-Save defaults to ROM basename.sav; previous backup is kept in .sav.bak.
+Options includes Back to Library; Exit or close the window to quit.
+Without --rom, games are scanned from $XDG_DATA_HOME/rgba/games (default
+~/.local/share/rgba/games). Saves and states use content-hash names there;
+settings use $XDG_CONFIG_HOME/rgba/settings (default ~/.config/rgba/settings).
+--save overrides the cartridge-save path for an explicit --rom.
 --frames exits after a bounded number of frames (useful for Xvfb smoke tests).";
 
 #[derive(Debug)]
 pub(crate) struct Arguments {
     pub(crate) bios: PathBuf,
-    pub(crate) rom: PathBuf,
+    pub(crate) rom: Option<PathBuf>,
     pub(crate) save: Option<PathBuf>,
     pub(crate) scale: u16,
     pub(crate) frames: Option<u64>,
@@ -68,9 +71,12 @@ impl Arguments {
                 _ => return Err(format!("duplicate option {option}")),
             }
         }
+        if save.is_some() && rom.is_none() {
+            return Err("--save requires --rom".to_owned());
+        }
         Ok(Self {
             bios: bios.ok_or("--bios is required")?,
-            rom: rom.ok_or("--rom is required")?,
+            rom,
             save,
             scale: scale.unwrap_or(3),
             frames,
@@ -91,11 +97,13 @@ mod tests {
                 .scale,
             2
         );
+        assert_eq!(parse(&["--bios", "b"]).expect("library mode").rom, None);
         for args in [
             vec![],
             vec!["--bios", "b", "--rom", "r", "--scale", "0"],
             vec!["--bios", "b", "--rom", "r", "--frames", "0"],
             vec!["--rom", "r", "--rom", "r"],
+            vec!["--bios", "b", "--save", "s"],
         ] {
             assert!(parse(&args).is_err());
         }

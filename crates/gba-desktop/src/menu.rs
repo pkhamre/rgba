@@ -2,7 +2,7 @@
 
 use crate::keybindings::{Action, BindingError, KeyBindings, key_name};
 
-const OPTIONS: usize = 4;
+const OPTIONS: usize = 5;
 const KEY_ROWS: usize = 7;
 const RESET_INDEX: usize = Action::ALL.len();
 const BACK_INDEX: usize = RESET_INDEX + 1;
@@ -12,6 +12,7 @@ pub(crate) enum Command {
     None,
     Resume,
     Exit,
+    BackToLibrary,
     SaveState,
     LoadState,
     SettingsChanged,
@@ -101,6 +102,7 @@ impl MenuState {
                     self.selected = 0;
                     Command::None
                 }
+                3 => Command::BackToLibrary,
                 _ => Command::Exit,
             },
             Page::Keybindings if self.selected < Action::ALL.len() => {
@@ -158,7 +160,13 @@ impl MenuState {
 
     fn draw_options(&self, output: &mut [u32]) {
         draw_text(output, 82, 22, "OPTIONS", 0x80d8ff);
-        let entries = ["SAVE STATE", "LOAD STATE", "KEYBINDS", "EXIT"];
+        let entries = [
+            "SAVE STATE",
+            "LOAD STATE",
+            "KEYBINDS",
+            "BACK TO LIBRARY",
+            "EXIT",
+        ];
         for (index, entry) in entries.iter().enumerate() {
             let y = 43 + index * 15;
             draw_text(
@@ -323,10 +331,23 @@ mod tests {
     fn explicit_exit_is_a_menu_action() {
         let mut menu = MenuState::default();
         let mut bindings = KeyBindings::default();
-        for _ in 0..3 {
+        for _ in 0..4 {
             menu.handle_key(0xff54, &mut bindings);
         }
         assert_eq!(menu.handle_key(0xff0d, &mut bindings), Command::Exit);
+    }
+
+    #[test]
+    fn menu_returns_to_the_game_library() {
+        let mut menu = MenuState::default();
+        let mut bindings = KeyBindings::default();
+        for _ in 0..3 {
+            menu.handle_key(0xff54, &mut bindings);
+        }
+        assert_eq!(
+            menu.handle_key(0xff0d, &mut bindings),
+            Command::BackToLibrary
+        );
     }
 
     #[test]

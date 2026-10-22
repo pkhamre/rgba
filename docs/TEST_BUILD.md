@@ -7,13 +7,14 @@ in user testing; full-game and physical-hardware accuracy remain unverified.
 
 ## Launch
 
-Requirements: Linux X11 or XWayland, a 24/32-bit TrueColor display, and the
-supplied local BIOS/ROM files. A native linker is needed when building normally.
+Requirements: Linux X11 or XWayland, a 24/32-bit TrueColor display, a local GBA
+BIOS, and at least one supported ROM (in the library folder or provided with
+`--rom`). A native linker is needed when building normally.
 
 ```sh
+# Scan the XDG game folder; auto-start one game, choose when there are several
 sh scripts/play.sh
-# Optional:
-sh scripts/play.sh --scale 2
+# Launch a ROM directly instead
 sh scripts/play.sh path/to/game.gba --save path/to/game.sav
 ```
 
@@ -23,19 +24,28 @@ For explicit asset paths instead of the convenience launcher:
 ```sh
 sh scripts/cargo.sh run --release -p gba-desktop -- \
   --bios bins/gba_bios.bin \
-  --rom "bins/Pokemon - Emerald Version (USA, Europe).gba"
+  --rom "path/to/game.gba"
 ```
 
 Arrows/WASD: D-pad. Z: A. X: B. Enter: Start. Backspace: Select. Q: L. E: R.
 Space: pause. Hold Tab: fast-forward. F5: flush cartridge save. F6/F7: save/load
 a machine state. F12: screenshot under `artifacts/` (binary PPM, never overwrite).
 Escape opens the options menu; Escape closes it and B backs out one menu level.
-Exit or window close quits and attempts to flush cartridge data. The menu
-opens keybinding settings and provides state actions. Selectable speed controls
-are deferred; Tab fast-forward remains available. State save/load results show a
-brief host-only on-screen notice. `game.settings` and `game.state` sidecars are stored next
-to the ROM; key settings persist across launches. Keybinding capture rejects
-conflicts and includes Reset Defaults. Focus loss releases held keys.
+Back to Library flushes cartridge data before switching games. Exit or window
+close quits and attempts to flush cartridge data. State save/load results show
+a brief host-only notice. Keybinding capture rejects conflicts and includes
+Reset Defaults. Focus loss releases held keys.
+
+Without `--rom`, ROMs are scanned directly inside `$XDG_DATA_HOME/rgba/games`
+(default `~/.local/share/rgba/games`); supported extensions are `.gba`, `.agb`,
+and `.bin`. One game starts automatically; multiple games show a chooser. Copy
+ROMs into the folder and restart to rescan. Saves/backups and states are stored
+under `$XDG_DATA_HOME/rgba/saves` and `states`, named by ROM SHA-256. Settings
+are under `$XDG_CONFIG_HOME/rgba/settings`. Missing ROM-side `.sav`, `.sav.bak`,
+`.state`, and `.settings` files are copied on first launch and left in place;
+central files take precedence on conflicts. To migrate sidecars from a ROM
+outside the library folder, launch its original path once first, or copy the
+sidecars alongside the ROM into the games folder.
 
 Pause shows a PAUSED overlay and title indicator without modifying guest pixels.
 The menu overlay is also host-only. The state file is versioned and ROM-bound;
@@ -51,18 +61,19 @@ If there is no X11 display, the frontend reports a headless alternative.
 For a virtual display, with Xvfb installed:
 
 ```sh
-xvfb-run -a sh scripts/play.sh --scale 1 --frames 120
+xvfb-run -a sh scripts/play.sh path/to/game.gba --scale 1 --frames 120
 ```
 
 ## Save and RTC policy
 
-- Saves default to the ROM path with extension `.sav`; Emerald uses 131,072
-  bytes. Wrong-sized existing saves are rejected rather than truncated.
+- Saves are named by ROM SHA-256 under the XDG data directory; Emerald uses
+  131,072 bytes. Wrong-sized existing saves are rejected rather than truncated.
 - Save **in the game's menu**. F5 only flushes cartridge bytes; it is not a
   save state and cannot save arbitrary current game progress.
 - Autosave waits for two wall-clock seconds without cartridge writes; F5 and
   normal exit also flush. Force-killing the process can lose pending changes.
-- Save replacement is atomic, with the previous file retained as `.sav.bak`.
+- Save replacement is atomic, with the previous central file retained as
+  `.sav.bak`.
   Existing temporary files are not overwritten. Save, backup, and temporary
   paths cannot alias either input image at session startup.
 - On a write failure while running, the window stays open and the save remains

@@ -118,6 +118,7 @@ name = "gba-desktop"
 version = "0.1.0"
 dependencies = [
  "gba-host",
+ "sha2",
  "x11rb",
 ]
 

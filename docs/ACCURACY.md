@@ -44,8 +44,10 @@ proof.
   wrong-ROM inputs are rejected without changing the machine. The host session
   provides an adjacent `.state` quick slot, atomic writes, bounded reads, and
   restore-time atomic cartridge-save synchronization with `.sav.bak` retention.
-  Desktop menu and keybind customization are implemented, with state-result
-  notices; selectable speed controls are deferred. Tab fast-forward remains.
+  Desktop menu/keybind customization and state-result notices are implemented.
+  The XDG game library scans ROMs, stores data by SHA-256 identity, and preserves
+  existing central files during legacy-sidecar migration. Selectable speed is
+  deferred; Tab fast-forward remains.
 
 ## Renderer optimization regressions
 

@@ -25,6 +25,22 @@ impl Session {
         rom_path: &Path,
         save_path: Option<&Path>,
     ) -> Result<Self, Box<dyn Error>> {
+        let save_path = save_path
+            .map(Path::to_owned)
+            .unwrap_or_else(|| rom_path.with_extension("sav"));
+        let state_path = rom_path.with_extension("state");
+        let settings_path = rom_path.with_extension("settings");
+        Self::try_new_with_paths(bios_path, rom_path, &save_path, &state_path, &settings_path)
+    }
+
+    /// Loads BIOS/ROM using caller-selected paths for all persistent data.
+    pub fn try_new_with_paths(
+        bios_path: &Path,
+        rom_path: &Path,
+        save_path: &Path,
+        state_path: &Path,
+        settings_path: &Path,
+    ) -> Result<Self, Box<dyn Error>> {
         let bios = fs::read(bios_path).map_err(|error| {
             io::Error::new(
                 error.kind(),
@@ -35,11 +51,9 @@ impl Session {
             io::Error::new(error.kind(), format!("ROM {}: {error}", rom_path.display()))
         })?;
         let mut machine = Machine::try_new(&bios, &rom)?;
-        let save_path = save_path
-            .map(Path::to_owned)
-            .unwrap_or_else(|| rom_path.with_extension("sav"));
-        let state_path = rom_path.with_extension("state");
-        let settings_path = rom_path.with_extension("settings");
+        let save_path = save_path.to_owned();
+        let state_path = state_path.to_owned();
+        let settings_path = settings_path.to_owned();
         let bios_canonical = bios_path.canonicalize()?;
         let rom_canonical = rom_path.canonicalize()?;
         let save_candidates = [
@@ -142,7 +156,7 @@ impl Session {
         &self.state_path
     }
 
-    /// Location of the ROM-specific keybindings settings file.
+    /// Location of the ROM-specific frontend settings file.
     #[must_use]
     pub fn settings_path(&self) -> &Path {
         &self.settings_path
@@ -372,6 +386,27 @@ mod tests {
             session.settings_path(),
             assets.directory.join("game.settings")
         );
+    }
+
+    #[test]
+    fn caller_selected_persistent_paths_are_used_for_all_files() {
+        let assets = Assets::new();
+        let data = assets.directory.join("central");
+        fs::create_dir_all(&data).expect("central data directory");
+        let save = data.join("game.sav");
+        let state = data.join("game.state");
+        let settings = data.join("game.settings");
+        let session = Session::try_new_with_paths(
+            &assets.directory.join("bios.bin"),
+            &assets.directory.join("game.gba"),
+            &save,
+            &state,
+            &settings,
+        )
+        .expect("custom persistent paths");
+        assert_eq!(session.save_path(), save);
+        assert_eq!(session.state_path(), state);
+        assert_eq!(session.settings_path(), settings);
     }
 
     #[test]

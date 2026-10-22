@@ -1,0 +1,303 @@
+//! X11 game-selection window shown when the library has multiple games.
+
+use crate::arguments::Arguments;
+use crate::game_library::Game;
+use crate::menu::draw_text;
+use crate::presentation::Presentation;
+use std::error::Error;
+use std::io;
+use std::process;
+use std::thread;
+use std::time::Duration;
+use x11rb::connection::{Connection, RequestConnection};
+use x11rb::protocol::Event;
+use x11rb::protocol::xproto::{
+    AtomEnum, ConnectionExt, CreateGCAux, CreateWindowAux, EventMask, ImageOrder, PropMode,
+    VisualClass, WindowClass,
+};
+use x11rb::rust_connection::RustConnection;
+use x11rb::wrapper::ConnectionExt as WrapperConnectionExt;
+
+pub(crate) fn choose(args: &Arguments, games: &[Game]) -> Result<Option<Game>, Box<dyn Error>> {
+    let (connection, screen_number) = RustConnection::connect(None).map_err(|error| {
+        io::Error::other(format!("cannot open X11 display for game library: {error}"))
+    })?;
+    let setup = connection.setup();
+    let screen = &setup.roots[screen_number];
+    let depth = screen.root_depth;
+    let format = setup
+        .pixmap_formats
+        .iter()
+        .find(|format| format.depth == depth)
+        .ok_or_else(|| io::Error::other("X11 root image format is missing"))?;
+    if !matches!(format.bits_per_pixel, 24 | 32) {
+        return Err(io::Error::other("game library requires a 24/32-bit X11 display").into());
+    }
+    let visual = screen
+        .allowed_depths
+        .iter()
+        .flat_map(|depth| &depth.visuals)
+        .find(|visual| visual.visual_id == screen.root_visual)
+        .ok_or_else(|| io::Error::other("X11 root visual is missing"))?;
+    if visual.class != VisualClass::TRUE_COLOR {
+        return Err(io::Error::other("game library requires an X11 TrueColor visual").into());
+    }
+    let window = connection.generate_id()?;
+    let gc = connection.generate_id()?;
+    let width = 240 * args.scale;
+    let height = 160 * args.scale;
+    connection
+        .create_window(
+            depth,
+            window,
+            screen.root,
+            0,
+            0,
+            width,
+            height,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            screen.root_visual,
+            &CreateWindowAux::new()
+                .background_pixel(0)
+                .event_mask(EventMask::EXPOSURE | EventMask::KEY_PRESS),
+        )?
+        .check()?;
+    connection
+        .create_gc(gc, window, &CreateGCAux::new())?
+        .check()?;
+    let presentation = Presentation::create(
+        &connection,
+        window,
+        gc,
+        depth,
+        screen.root_visual,
+        args.scale,
+    )?;
+    let title_atom = AtomEnum::WM_NAME;
+    connection
+        .change_property8(
+            PropMode::REPLACE,
+            window,
+            title_atom,
+            AtomEnum::STRING,
+            b"Rust GBA - Game Library",
+        )?
+        .check()?;
+    let pid_atom = connection.intern_atom(false, b"_NET_WM_PID")?.reply()?.atom;
+    connection
+        .change_property32(
+            PropMode::REPLACE,
+            window,
+            pid_atom,
+            AtomEnum::CARDINAL,
+            &[process::id()],
+        )?
+        .check()?;
+    let protocols = connection
+        .intern_atom(false, b"WM_PROTOCOLS")?
+        .reply()?
+        .atom;
+    let delete = connection
+        .intern_atom(false, b"WM_DELETE_WINDOW")?
+        .reply()?
+        .atom;
+    connection
+        .change_property32(
+            PropMode::REPLACE,
+            window,
+            protocols,
+            AtomEnum::ATOM,
+            &[delete],
+        )?
+        .check()?;
+    let mapping = connection
+        .get_keyboard_mapping(setup.min_keycode, setup.max_keycode - setup.min_keycode + 1)?
+        .reply()?;
+    let minimum_keycode = setup.min_keycode;
+    let columns = usize::from(mapping.keysyms_per_keycode);
+    let byte_order = setup.image_byte_order == ImageOrder::LSB_FIRST;
+    connection.map_window(window)?.check()?;
+    connection.flush()?;
+
+    let mut selected = 0usize;
+    let mut result = None;
+    let mut running = true;
+    while running {
+        draw_library(
+            &connection,
+            gc,
+            &presentation,
+            depth,
+            format.bits_per_pixel,
+            format.scanline_pad,
+            byte_order,
+            [visual.red_mask, visual.green_mask, visual.blue_mask],
+            games,
+            selected,
+        )?;
+        connection.flush()?;
+        let mut received = false;
+        while let Some(event) = connection.poll_for_event()? {
+            received = true;
+            match event {
+                Event::ClientMessage(message)
+                    if message.type_ == protocols && message.data.as_data32()[0] == delete =>
+                {
+                    running = false;
+                }
+                Event::DestroyNotify(_) => running = false,
+                Event::KeyPress(event) => {
+                    let symbol = key_symbol(
+                        usize::from(event.detail),
+                        minimum_keycode,
+                        columns,
+                        &mapping.keysyms,
+                    );
+                    match symbol {
+                        0xff52 if !games.is_empty() => {
+                            selected = (selected + games.len() - 1) % games.len();
+                        }
+                        0xff54 if !games.is_empty() => selected = (selected + 1) % games.len(),
+                        0xff0d if !games.is_empty() => {
+                            result = games.get(selected).cloned();
+                            running = false;
+                        }
+                        0xff1b | 0xff08 => running = false,
+                        _ => {}
+                    }
+                }
+                Event::Error(error) => {
+                    return Err(io::Error::other(format!("X11 protocol error: {error:?}")).into());
+                }
+                _ => {}
+            }
+        }
+        if !received && running {
+            thread::sleep(Duration::from_millis(16));
+        }
+    }
+    presentation.close(&connection)?;
+    connection.free_gc(gc)?;
+    connection.destroy_window(window)?;
+    connection.flush()?;
+    Ok(result)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_library(
+    connection: &RustConnection,
+    gc: u32,
+    presentation: &Presentation,
+    depth: u8,
+    bits_per_pixel: u8,
+    scanline_pad: u8,
+    little_endian: bool,
+    masks: [u32; 3],
+    games: &[Game],
+    selected: usize,
+) -> Result<(), Box<dyn Error>> {
+    let pixels = library_pixels(games, selected);
+    let bytes = usize::from(bits_per_pixel) / 8;
+    let pad = usize::from(scanline_pad) / 8;
+    let stride = (240 * usize::from(presentation.upload_scale) * bytes).div_ceil(pad) * pad;
+    let image = super::desktop::pack_pixels(
+        &pixels,
+        presentation.upload_scale,
+        bytes,
+        stride,
+        little_endian,
+        masks,
+    );
+    let rows = 160 * usize::from(presentation.upload_scale);
+    let width = 240 * presentation.upload_scale;
+    let connection_bytes = connection.maximum_request_bytes();
+    let rows_per_request = ((connection_bytes - 64) / stride).max(1);
+    for row in (0..rows).step_by(rows_per_request) {
+        let count = rows_per_request.min(rows - row);
+        connection.put_image(
+            x11rb::protocol::xproto::ImageFormat::Z_PIXMAP,
+            presentation.pixmap,
+            gc,
+            width,
+            count as u16,
+            0,
+            row as i16,
+            0,
+            depth,
+            &image[row * stride..(row + count) * stride],
+        )?;
+    }
+    presentation.present(connection)?;
+    Ok(())
+}
+
+fn library_pixels(games: &[Game], selected: usize) -> Vec<u32> {
+    let mut pixels = vec![0x101820; 240 * 160];
+    draw_text(&mut pixels, 72, 12, "GAME LIBRARY", 0x80d8ff);
+    for x in 10..230 {
+        pixels[30 * 240 + x] = 0xffffff;
+    }
+    if games.is_empty() {
+        draw_text(&mut pixels, 58, 52, "NO GAMES FOUND", 0xffd060);
+        draw_text(&mut pixels, 22, 76, "COPY ROMS TO GAMES FOLDER", 0xffffff);
+        draw_text(&mut pixels, 42, 92, "RESTART TO RESCAN", 0x90a0b0);
+        draw_text(&mut pixels, 66, 132, "ESC TO EXIT", 0x90a0b0);
+        return pixels;
+    }
+    let start = selected.saturating_sub(6);
+    for (row, game) in games.iter().enumerate().skip(start).take(7) {
+        let y = 39 + (row - start) * 13;
+        let color = if row == selected { 0xffd060 } else { 0xffffff };
+        draw_text(
+            &mut pixels,
+            20,
+            y,
+            if row == selected { ">" } else { " " },
+            color,
+        );
+        let label = game.title.to_ascii_uppercase();
+        draw_text(&mut pixels, 34, y, &label, color);
+    }
+    draw_text(&mut pixels, 26, 137, "UP DOWN MOVE  ENTER LOAD", 0x90a0b0);
+    pixels
+}
+
+fn key_symbol(code: usize, minimum: u8, columns: usize, symbols: &[u32]) -> u32 {
+    code.checked_sub(usize::from(minimum))
+        .and_then(|index| symbols.get(index * columns))
+        .copied()
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::game_library::Game;
+
+    #[test]
+    fn empty_library_screen_explains_how_to_populate_it() {
+        let pixels = super::library_pixels(&[], 0);
+        assert_eq!(pixels.len(), 240 * 160);
+        assert_ne!(pixels, vec![0x101820; 240 * 160]);
+    }
+
+    #[test]
+    fn selected_game_row_is_rendered_differently() {
+        let games = [
+            Game {
+                path: "one.gba".into(),
+                identity: [1; 32],
+                title: "ONE".to_owned(),
+            },
+            Game {
+                path: "two.gba".into(),
+                identity: [2; 32],
+                title: "TWO".to_owned(),
+            },
+        ];
+        assert_ne!(
+            super::library_pixels(&games, 0),
+            super::library_pixels(&games, 1)
+        );
+    }
+}

@@ -132,6 +132,11 @@ def validate(args):
     build=subprocess.check_output(["sh",str(ROOT/"scripts/cargo.sh"),"build","--release","-p","gba-desktop","--message-format=json"],cwd=ROOT,text=True)
     binary=artifact_executable(build)
     env=dict(os.environ)
+    xdg_data=output/"xdg-data";xdg_config=output/"xdg-config"
+    env["XDG_DATA_HOME"]=str(xdg_data);env["XDG_CONFIG_HOME"]=str(xdg_config)
+    identity=hashlib.sha256(rom_copy.read_bytes()).hexdigest()
+    state_path=xdg_data/"rgba"/"states"/f"{identity}.state"
+    settings_path=xdg_config/"rgba"/"settings"/f"{identity}.settings"
     if args.audio=="alsa":
         config=output/"alsa-null.conf";config.write_text("pcm.!default { type null }\n")
         env["ALSA_CONFIG_PATH"]=str(config)
@@ -162,7 +167,7 @@ def validate(args):
                     display.tap(0xff1b);time.sleep(.2)
                     if b"OPTIONS" not in display.title():raise AssertionError("Escape did not open options")
                     display.tap(0xff0d);time.sleep(.2)
-                    if not (output/"game.state").is_file():raise AssertionError("Save State menu action failed")
+                    if not state_path.is_file():raise AssertionError("Save State menu action failed")
                     display.tap(0xff54);display.tap(0xff0d);time.sleep(.2)
                     if b"OPTIONS" not in display.title():raise AssertionError("Load State left options menu")
                     display.tap(0xff1b);time.sleep(.2)
@@ -174,7 +179,7 @@ def validate(args):
                     display.tap(0xff0d)
                     for _ in range(12):display.tap(0xff54)
                     display.tap(0xff0d);display.tap(0xffc3)
-                    settings=output/"game.settings"
+                    settings=settings_path
                     if settings.exists():raise AssertionError("duplicate keybinding was incorrectly saved")
                     display.tap(0x6d)
                     if "OPTIONS MENU=0000006d,00000000" not in settings.read_text():raise AssertionError("keybinding was not persisted")
@@ -186,7 +191,6 @@ def validate(args):
                     if notice_border(display.snapshot(args.scale))!=bytes([112,224,144]):raise AssertionError("save-state success notice missing")
                     display.tap(0xffc4);time.sleep(.05)
                     if notice_border(display.snapshot(args.scale))!=bytes([112,224,144]):raise AssertionError("load-state success notice missing")
-                    state_path=output/"game.state"
                     if not state_path.is_file():raise AssertionError("state hotkeys failed")
                     state_path.write_bytes(b"corrupt state")
                     display.tap(0xffc4);time.sleep(.05)
@@ -252,7 +256,7 @@ def validate(args):
             if not display.window:raise RuntimeError("exit-test window did not map")
             display.tap(0x6d)
             if b"OPTIONS" not in display.title():raise AssertionError("saved menu binding did not reload")
-            for _ in range(3):display.tap(0xff54)
+            for _ in range(4):display.tap(0xff54)
             display.key(0xff0d,True);display.key(0xff0d,False)
             try:exit_status=exit_process.wait(timeout=10)
             except subprocess.TimeoutExpired as error:raise AssertionError("explicit Exit did not close the window") from error

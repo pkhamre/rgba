@@ -32,7 +32,9 @@ Implemented:
 - X11/XWayland presentation, integer scaling, native wall-clock pacing, and
   an Escape-accessible options menu with explicit Exit, state actions, and a
   Keybindings/Reset Defaults page. Brief host-only state-result notices are
-  shown for quick saves and loads.
+  shown for quick saves and loads. The game library scans the XDG games folder,
+  centralizes saves/states/settings by ROM SHA-256, and can return to the library
+  before loading another game.
 - ROM-specific key remapping for all GBA and emulator actions, duplicate-key
   rejection, settings persistence, and F6/F7 quick state hotkeys. Defaults keep
   existing controls; Escape now opens the menu instead of quitting.
@@ -92,14 +94,17 @@ playthrough, and performance on the user's host is not certified.
 
 The options/state implementation has unit coverage for state encoding, ROM
 binding and corruption rejection; atomic Session slots and cartridge-save sync;
-settings round trips and duplicate rejection; menu navigation/capture; and
-host-only overlays. Selectable speed controls are deferred at the user's
+settings round trips and duplicate rejection; menu navigation/capture; host-only
+overlays; XDG path discovery, ROM hashing/deduplication, legacy sidecar migration,
+and desktop library switching. Selectable speed controls are deferred at the user's
 request; Tab fast-forward remains. The isolated-ROM Xvfb acceptance run passed
-at scale 3: 6,000 frames / 100.222 emulated seconds in 106.919 wall seconds. It
+at scale 3: 6,000 frames / 100.222 emulated seconds in 109.065 wall seconds. It
 covered menu state save/load/resume, duplicate-key rejection, keybinding
 persistence/reload, F6/F7 success and failure notices, and explicit Exit at
-frame 4 of a second launch. Both isolated saves were unchanged. Audio was
-disabled, so this is not audio-device evidence.
+frame 4 of a second launch. Both isolated saves were unchanged. A separate
+Xvfb integration run verified a multi-game startup chooser and returning to the
+library to select and launch again. Audio was disabled, so these are not
+audio-device results.
 
 Next: hardware-backed CPU/bus/device/audio tests, reference captures, real-device
 listening/latency checks, and broader gameplay validation.

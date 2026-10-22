@@ -134,10 +134,11 @@ and the first battle succeeded in user testing. A controlled real-time desktop
 soak passed; varied human gameplay/listening and hardware/reference validation
 remain open. The desktop-options follow-up is implemented: core/host state
 persistence, settings storage, keybinding/menu models, state-result notices, and
-desktop event-loop integration. Selectable speed controls are deferred at the
-user's request; Tab fast-forward remains. Standard checks and the isolated
-6,000-frame Xvfb interactive acceptance run pass. Physical hardware, varied
-gameplay, and real-device audio validation remain open.
+desktop event-loop integration. The user-requested XDG game library scans a
+single games directory, hashes ROM identity, centralizes saves/states/settings,
+and supports startup selection plus switching from the in-game menu. Selectable
+speed controls remain deferred; Tab fast-forward remains. Physical hardware,
+varied gameplay, and real-device audio validation remain open.
 
 ## Work policy
 

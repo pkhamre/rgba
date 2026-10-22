@@ -142,18 +142,22 @@ its historical default remains 1 for comparison with older soak runs.
 On a Linux desktop: `sh scripts/play.sh`. With Xvfb installed:
 
 ```sh
-xvfb-run -a sh scripts/play.sh --scale 1 --frames 120
+xvfb-run -a sh scripts/play.sh path/to/game.gba --scale 1 --frames 120
 ```
 
 A 6,000-frame `scripts/validate_desktop.py` run passed under Xvfb at scale 3
-(100.222 emulated seconds, 106.919 wall seconds). It exercised options state
+(100.222 emulated seconds, 109.065 wall seconds). It exercised options state
 save/load/resume, duplicate binding rejection, keybinding persistence across
 launches, F6/F7 success/failure notices, and explicit Exit. The disposable
 cartridge save was unchanged on both exits. Audio was off; this result does not
 validate a playback device. A separate virtual-X-server run compared captured
-paused-window RGB bytes against the core screenshot.
-Those local artifacts are ignored (`artifacts/desktop-smoke.json` and
-`artifacts/desktop-xvfb.log`); this is not a physical-display latency test.
+paused-window RGB bytes against the core screenshot. A separate Xvfb run with
+two distinct ROM hashes verified the startup chooser, Back to Library action,
+and selection/resumption of a game. The validator isolated XDG data/config
+paths under its output directory; the disposable cartridge save remained
+unchanged. These tests do not establish physical-display latency. Local test
+artifacts are ignored (`artifacts/desktop-smoke.json` and
+`artifacts/desktop-xvfb.log`).
 
 PSG/Direct Sound and Linux audio transport are implemented. Game save/Continue
 is locally verified; the first battle succeeded in user testing. A 32-minute
