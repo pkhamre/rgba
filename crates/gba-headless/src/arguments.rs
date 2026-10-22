@@ -15,10 +15,10 @@ pub(crate) struct Arguments {
 
 pub(crate) const USAGE: &str = "\
 gba-headless --bios PATH --rom PATH [--steps COUNT] [--trace PATH] [--stop-at HEX]
-Runs at most COUNT instructions (default 100000); stops on unsupported hardware.
+Runs at most COUNT CPU activities (default 100000); stops on unsupported hardware.
 --stop-at stops before executing the address (hexadecimal, optional 0x prefix).
-Trace files contain versioned v1 post-instruction state, one line per instruction.
---frames COUNT runs display frames instead of instructions.
+Trace files contain v1 post-activity state; exec/skip, halt, and irq identify the kind.
+--frames COUNT runs display frames instead of counting CPU activities.
 --screenshot PATH writes the final 240x160 framebuffer as a binary PPM image.
 --input FRAME:BUTTONS changes held keys (e.g. 400:start, 410:none).
 This is a development runner; audio output is not yet implemented.";

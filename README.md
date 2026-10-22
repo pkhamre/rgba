@@ -1,61 +1,91 @@
 # Rust GBA emulator
 
 A from-scratch Rust ARM7TDMI/GBA emulator targeting Linux desktop and hardware
-accuracy. **This is an early CPU/bus implementation, not a playable emulator.**
-The supplied BIOS currently stops at unimplemented POSTFLG I/O before booting
-Emerald. There is no desktop frontend, graphics, audio, save hardware, or RTC yet.
+accuracy. **A testable desktop preview is available, without audio.** The supplied
+BIOS boots normally; scripted Emerald input reaches Professor Birch's new-game
+introduction. Full gameplay and hardware accuracy are not yet verified.
+
+## Try the preview
+
+From a Linux X11 desktop, or Wayland desktop with XWayland:
+
+```sh
+sh scripts/play.sh
+```
+
+This uses your existing `bins/gba_bios.bin` and
+`bins/Pokemon - Emerald Version (USA, Europe).gba`. No images are bundled.
+You can select another ROM: `sh scripts/play.sh path/to/game.gba --scale 2`.
+
+Controls: arrows/WASD = D-pad; Z/X = A/B; Enter = Start; Backspace = Select;
+Q/E = L/R. Space pauses, Tab fast-forwards, F5 flushes the cartridge save,
+F12 captures a PPM screenshot, and Escape/window close quits.
+Hold Tab through boot/intro if desired; use Enter at the title and Z to confirm.
+
+Save data defaults to the ROM's `.sav` file; previous data is kept in
+`.sav.bak`. Use the game's save menu first: F5 is not an emulator save state.
+See [docs/TEST_BUILD.md](docs/TEST_BUILD.md) for launch options, RTC/save policy,
+verified behavior, and limitations.
+
+No graphical display? Run the bounded supplied-asset smoke test:
+
+```sh
+sh scripts/smoke-emerald.sh
+```
+
+It runs 4,000 frames with scripted input and writes a screenshot under
+`artifacts/`. It does not verify a battle, in-game save/continue, or audio.
 
 ## Build and check
 
-Install Rust using rustup, a native Linux linker/toolchain, and Python 3.9+ for
-asset-free tooling tests. The repository
-pins stable Rust 1.90.0 and uses no third-party Rust dependencies at this stage.
+Install Rust/rustup, a native Linux linker/toolchain, and Python 3.9+ for
+asset-free tooling tests. Rust 1.90.0 is pinned. The desktop uses x11rb for
+X11 protocol transport, not for emulation; no emulator backend is used.
 
 ```sh
 sh scripts/check.sh
+sh scripts/cargo.sh test --workspace --release
 ```
 
-This workspace also has an isolated toolchain under ignored `.tools/`, using
-Rust's self-contained musl target because the execution environment has no C
-compiler. `scripts/cargo.sh` selects it when `cargo` is absent from PATH.
-Normal development hosts use their own Cargo and native target.
+The ignored `.tools/` setup in this workspace supplies musl Rust and an optional
+Zig C-linker wrapper for dependency build scripts. `scripts/cargo.sh` selects
+that isolated setup when Cargo is absent from PATH. Normal hosts use their
+own Cargo and native linker. Toolchains/build products are not committed.
 
 ## Headless development runner
 
 ```sh
 mkdir -p artifacts
-sh scripts/cargo.sh run -p gba-headless -- \
+sh scripts/cargo.sh run --release -p gba-headless -- \
   --bios bins/gba_bios.bin \
   --rom "bins/Pokemon - Emerald Version (USA, Europe).gba" \
-  --steps 100000 --trace artifacts/boot.trace
+  --steps 8000000 --stop-at 08000000
 ```
 
-The runner validates asset sizes, bounds instruction execution, and reports the
-first unsupported operation with the executing address. **The above command
-currently exits unsuccessfully on POSTFLG I/O; that is expected, not successful
-BIOS boot.** Trace files are created exclusively and never overwrite existing
-files. Use a new trace filename on subsequent runs.
+This reaches cartridge entry through the supplied BIOS, without replacing BIOS
+calls. `--stop-at` returns failure if the CPU-activity budget is exhausted first.
+Use `--frames N --screenshot new-file.ppm` for framebuffer capture,
+`--input FRAME:buttons` for held keys, and `--trace new-file.trace` for
+versioned activity traces (instructions, HALT, IRQ entry). Screenshot/trace files
+never overwrite existing files. `--help` needs no assets.
 
-`--stop-at 08000000` stops before executing a target address; exhausting the
-instruction budget without reaching it returns failure. `--help` needs no assets.
+## Layout and evidence
 
-## Layout
-
-- `crates/gba-core`: CPU, status/banked registers, bus, machine, and trace types.
+- `crates/gba-core`: deterministic CPU, bus, devices, renderer, and cartridge.
+- `crates/gba-host`: shared asset loading, atomic saves, and screenshots.
+- `crates/gba-desktop`: X11 window, keyboard, integer scaling, and pacing.
 - `crates/gba-headless`: bounded CLI runner and end-to-end tests.
-- `scripts/`: checks and optional pinned reference-vector download.
-- [PLAN.md](PLAN.md): agreed architecture and release checkpoint.
-- [docs/PROGRESS.md](docs/PROGRESS.md): milestone status and next work.
+- [PLAN.md](PLAN.md): agreed milestones and outstanding release checkpoint.
+- [docs/PROGRESS.md](docs/PROGRESS.md): status and next work.
 - [docs/ACCURACY.md](docs/ACCURACY.md): implemented behavior and known failures.
-- [docs/TESTING.md](docs/TESTING.md): reproducible checks and reference comparisons.
+- [docs/TESTING.md](docs/TESTING.md): reproducible checks and reference results.
 - [docs/STYLE.md](docs/STYLE.md): Google Rust style policy.
-- [docs/CPU_RESEARCH.md](docs/CPU_RESEARCH.md): CPU fixes, evidence, and reference-model disagreements.
-- [docs/UPSTREAM_CPU_TESTS.md](docs/UPSTREAM_CPU_TESTS.md): isolated mGBA CPU-table replay (235 passing cases).
+- [docs/CPU_RESEARCH.md](docs/CPU_RESEARCH.md): CPU corrections and disagreements.
+- [docs/UPSTREAM_CPU_TESTS.md](docs/UPSTREAM_CPU_TESTS.md): 235 isolated mGBA cases.
 
-The multiply carry calculation is an attributed adaptation of a published
-hardware-research model, not an emulator backend. Its zlib notice and the MIT
-notice for minimized reference-test constants are retained in `LICENSES/`.
+Strict CPU comparison still fails; it is not suppressed by the passing standard
+checks. The multiply carry model and test constants retain their notices under
+`LICENSES/`, as do host dependency license notices.
 
-BIOS/game images, saves, local test assets, build products, and traces are ignored
-by version control. Supply your own lawfully obtained images; none are embedded
-in the source or tests.
+BIOS/game images, saves, downloaded test assets, build products, and traces are
+ignored by version control. Supply your own lawfully obtained images.

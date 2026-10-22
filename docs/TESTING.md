@@ -10,7 +10,7 @@ sh scripts/check.sh
 sh scripts/cargo.sh test --workspace --release
 ```
 
-Current standard result: **88 Rust unit/integration tests, one doctest, and 13
+Current standard result: **106 Rust unit/integration tests, one doctest, and 13
 Python tool tests pass**. Two ignored optional tests require reference assets.
 The standard tests use synthetic data only; CI needs no BIOS/game/test ROM.
 
@@ -39,7 +39,7 @@ These experimental vectors come from NanoBoyAdvance, not direct hardware
 capture. Upstream warns about illegal operands and cycle recording. They do
 not establish GBA cycle accuracy.
 
-**The full strict command currently fails:** 2,121,019 matches, 128,981 failures.
+**The full strict command currently fails:** 2,124,072 matches, 125,928 failures.
 27 groups match completely. No test outcomes are waived or normalized.
 See [CPU_RESEARCH.md](CPU_RESEARCH.md) for first-diagnostic categories and
 documented disagreements, and [ACCURACY.md](ACCURACY.md) for remaining gaps.
@@ -80,7 +80,8 @@ Choose a new report filename on each run.
 
 Classification identifies first-diagnostic patterns, not every possible issue
 in a case. Current full logs/TSV/triage are under ignored
-`artifacts/cpu-validation-fixed-access.*` and `artifacts/cpu-triage-fixed-access.json`.
+`artifacts/cpu-preview-report.txt`, `artifacts/cpu-preview-new.tsv`, and
+`artifacts/cpu-preview-triage.json`.
 
 ## Independent mGBA CPU-table baselines
 
@@ -95,15 +96,37 @@ CPU replay, not execution of the complete suite ROM or new physical-GBA capture.
 lowering, bounded completion, coverage, and group/case selection. These results
 do not replace or suppress strict reference-vector failures.
 
-## BIOS diagnostic
+## Supplied-asset BIOS and game smoke
 
-Use the README's bounded runner command. Current supplied-asset result remains:
+The README's bounded `--stop-at 08000000 --steps 8000000` command now succeeds:
+7,492,424 CPU activities, 75,998,009 clocks, cartridge entry at `08000000`.
+POSTFLG and the BIOS's zero-SPSR initialization no longer block normal boot.
 
-```text
-completed=4 clocks=10 next=00000074 cpsr=600000d3
-error: unimplemented I/O read at 04000300
+```sh
+sh scripts/smoke-emerald.sh
 ```
 
-This verifies loading and initial CPU execution only, not BIOS authenticity,
-successful boot, or Emerald compatibility. Clock counts are model outputs, not
-hardware measurements. Proprietary assets remain unchanged and excluded from CI.
+This executes 4,000 display frames with scripted Start/A presses and captures
+Professor Birch's new-game introduction. Inspect the PPM output; the script
+does not automatically assert visual correctness. Core/host checks use
+synthetic Flash, RTC, save, and framebuffer fixtures; they do not establish an
+Emerald menu save/restart/continue round-trip.
+
+## Optional desktop smoke
+
+On a Linux desktop: `sh scripts/play.sh`. With Xvfb installed:
+
+```sh
+xvfb-run -a sh scripts/play.sh --scale 1 --frames 120
+```
+
+Locally, a virtual-X-server run also injected pause/F12/Escape events and
+compared captured X11 window RGB bytes against the paused core screenshot.
+Window mapping, keyboard routing, framebuffer transport, and clean exit passed.
+Those local artifacts are ignored (`artifacts/desktop-smoke.json` and
+`artifacts/desktop-xvfb.log`); this is not a physical-display latency test.
+
+See TEST_BUILD.md for known limits and outstanding acceptance work: audio,
+first battle, real in-game save/continue, and a 30-minute interactive run.
+Clock counts are model outputs, not hardware measurements. Proprietary assets
+remain unchanged and excluded from CI.

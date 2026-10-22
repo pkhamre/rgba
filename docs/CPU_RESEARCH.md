@@ -2,9 +2,10 @@
 
 ## Scope and evidence
 
-This work changes CPU execution and test tooling only. No peripherals, desktop
-frontend, BIOS bypass, or game-specific workaround was added. The supplied BIOS
-still stops at unimplemented POSTFLG I/O.
+The original CPU-validation work below changed CPU execution and test tooling
+only. Subsequent provisional peripherals and desktop presentation now allow
+normal BIOS boot and Emerald's new-game introduction; see TEST_BUILD.md.
+There is no BIOS bypass or game-specific hardware workaround.
 
 Evidence consulted:
 
@@ -100,13 +101,22 @@ and condition-failed instructions. All 150,000 cases in the three newly enabled
 absent-coprocessor groups match. Exact exception cycle ordering remains a
 hardware-validation task.
 
+### Saved PSR storage during BIOS initialization
+
+The supplied BIOS writes zero into SPSR during initialization. SPSR stores raw
+saved bits; that write must not select an invalid current register bank. The
+core now permits saved-mode bit patterns, validating current-mode transitions
+when restored instead. A synthetic BIOS regression covers the zero write.
+The complete strict replay removes 3,053 arm_msr_reg failures (42,738 to 45,791
+matches), without modifying expected data or waiving assertions.
+
 ## Strict comparison results
 
-The full harness now runs all 45 upstream groups: **2,121,019 matches and
-128,981 failures out of 2,250,000 cases**. 27 groups match completely. Nothing is
+The full harness now runs all 45 upstream groups: **2,124,072 matches and
+125,928 failures out of 2,250,000 cases**. 27 groups match completely. Nothing is
 silently excluded or normalized to make the total pass.
 
-On the original 41-group scope, failures fell from 88,312 to 78,981 (9,331 fewer)
+On the original 41-group scope, failures fell from 88,312 to 75,928 (12,384 fewer)
 despite the stronger N/S assertions. The expanded total adds 50,000 deliberate
 Thumb reserved-condition disagreements and 150,000 passing coprocessor cases.
 
@@ -119,7 +129,7 @@ The first diagnostic from every current failing case fits one of these patterns:
 | User-bank transfer with writeback | 466 | ARM data sheet 4.11.4 says not to use writeback in this form. |
 | PC base with writeback | 4,907 | Unsupported/document-restricted PC addressing combinations. |
 | Forbidden R15 operand | 15,428 | MRS, multiply, and SWP operands outside their documented register ranges. |
-| Reserved mode write diagnostic | 6,742 | Current core rejects invalid processor modes instead of inventing register banks. |
+| Reserved current-mode write diagnostic | 3,689 | Current-mode transitions reject invalid processor modes instead of inventing banks; raw SPSR storage is allowed. |
 | MSR T-bit write | 520 | MSR must not be used to switch instruction sets; core preserves T. |
 | Reserved Thumb BX field | 25,102 | Bit 7 is reserved on ARMv4T; core vectors, reference performs BX. |
 | Reserved Thumb condition 0xe | 50,000 | GBATEK marks it Undefined; core vectors, reference treats it as an always-taken branch. |
@@ -130,8 +140,9 @@ test still fails. Hardware-derived tests are needed to establish deterministic
 behavior for reserved/unsupported encodings before changing those policies.
 
 Reproduce the report with the commands in TESTING.md. Current local artifacts:
-`artifacts/cpu-validation-fixed-access.txt`, its TSV counterpart, and
-`artifacts/cpu-triage-fixed-access.json`.
+`artifacts/cpu-preview-report.txt`, `artifacts/cpu-preview-new.tsv`, and
+`artifacts/cpu-preview-triage.json`. The earlier fixed-access baseline was
+2,121,019 matches / 128,981 failures, before the SPSR storage correction.
 
 ## Remaining validation before accepting the CPU/bus milestone
 

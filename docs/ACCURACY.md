@@ -1,7 +1,8 @@
 # Accuracy ledger
 
-**Target: hardware accuracy. Current status: incomplete CPU/bus development.**
-Nothing here is a cycle-perfect or playable-Emerald claim.
+**Target: hardware accuracy. Current status: testable, incomplete desktop preview.**
+Normal BIOS boot and Emerald's new-game introduction work. This is not a
+cycle-perfect, full-game, audio-capable, or accepted playable-release claim.
 
 ## References and findings
 
@@ -28,6 +29,13 @@ proof.
   selected byte-write, forced-alignment, and load-rotation quirks.
 - Baseline N/S/I charging, WAITCNT durations, and 128 KiB ROM boundaries.
 - Terminal device faults prevent resuming a partially failed instruction.
+- Arbitrary SPSR bit storage without selecting an invalid current mode; a
+  synthetic BIOS sequence covers the initialization case.
+- LCD line/status/IRQ timing, IRQ entry, timers/cascade, DMA, keypad, HALT,
+  software scanline rendering, banked Flash/SRAM, and GPIO RTC control reads.
+- Host save-size checks, atomic replacement/backups, alias protection, and
+  write-failure dirty-state retention; desktop integer-scale presentation and
+  headless screenshots share the same core framebuffer.
 
 ## Explicit gaps
 
@@ -49,10 +57,15 @@ proof.
 - Open bus is a last-physical-read approximation, not full ARM/Thumb pipeline
   composition.
 - Video contention and bitmap-mode VRAM byte restrictions are missing.
-- Only static unpressed KEYINPUT and baseline WAITCNT I/O are implemented.
-  Most I/O faults explicitly. ROM GPIO is not intercepted.
-- No scheduler, IRQ delivery, timers, DMA, HALT/STOP, PPU, APU, Flash/RTC,
-  persistent saves, or desktop frontend.
+  Rendering is scanline-based, not a final dot-accurate model. Affine state,
+  mid-line effects, sprite evaluation limits, and mode edge cases need tests.
+- Device advancement and DMA arbitration occur at CPU-activity boundaries;
+  precise startup, priority/preemption, bus ownership, and IRQ sampling need
+  hardware validation. STOP is currently HALT; serial has no peer.
+- Audio registers/FIFO timing can request DMA, but there is no PSG synthesis,
+  mixed sample output, or audio device integration.
+- Flash program/erase completes instantly; busy/toggle timing is missing.
+  RTC reads/control work, but date/time writes, alarms, and persistence do not.
 - Memory quirks have synthetic tests, not exhaustive physical-hardware tests.
 
 ## Strict reference baseline
@@ -61,7 +74,7 @@ All 45 groups × 50,000 cases are checked. Assertions cover User/banked register
 CPSR/SPSRs, pipeline, transaction order/address/width/data, transaction N/S flags,
 and final next-fetch N/S state. Code/data flags and LOCK are not checked.
 
-**2,121,019 matches; 128,981 failures.** 27 groups match completely. The strict
+**2,124,072 matches; 125,928 failures.** 27 groups match completely. The strict
 command still fails; diagnostic classification does not suppress failures.
 
 | Incomplete group | Matching / 50,000 |
@@ -76,7 +89,7 @@ command still fails; diagnostic classification does not suppress failures.
 | arm_ldrh_strh | 48,221 |
 | arm_ldrsb_ldrsh | 47,666 |
 | arm_mrs | 48,420 |
-| arm_msr_reg | 42,738 |
+| arm_msr_reg | 45,791 |
 | arm_mul_mla | 45,472 |
 | arm_mull_mlal | 44,782 |
 | arm_swp | 45,898 |
@@ -85,12 +98,16 @@ command still fails; diagnostic classification does not suppress failures.
 | thumb_push_pop | 49,974 |
 | thumb_undefined_bcc | 0 |
 
-On the original 41-group scope, 78,981 cases fail versus the prior 88,312.
+On the original 41-group scope, 75,928 cases fail versus the prior 88,312.
 The larger total includes newly enabled groups; see CPU_RESEARCH.md rather than
 interpreting these counts as a hardware-compatibility percentage.
 
 The isolated mGBA suite baseline passes 235 cases (carry/shifter/multiply-long);
 see UPSTREAM_CPU_TESTS.md for source provenance and limitations. No complete
 hardware test ROM, mGBA-emulator differential run, or fresh physical capture
-has been completed. BIOS execution has not reached the cartridge entry point. Gameplay, rendering, audio, and
-sustained real-time performance are unverified.
+has been completed. BIOS boot reaches cartridge entry; 4,000 scripted Emerald
+frames reach Professor Birch's introduction. Xvfb window pixels match the core
+framebuffer, which verifies host transport rather than rendering accuracy.
+First battle, in-game save/continue, audio, reference frames, sustained real-time
+performance on a named host, and a 30-minute interactive run remain unverified.
+See TEST_BUILD.md for the runnable preview and its explicit limits.

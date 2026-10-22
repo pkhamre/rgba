@@ -13,8 +13,8 @@
 
 ## Verified inputs and prerequisites
 
-- `bins/gba_bios.bin`: 16,384 bytes. Size checked; authenticity/hash not yet checked.
-- `bins/Pokemon - Emerald Version (USA, Europe).gba`: 16,777,216 bytes; title `POKEMON EMER`, game code `BPEE`.
+- `bins/gba_bios.bin`: 16,384 bytes; SHA-256 `fd2547724b505f487e6dcb29ec2ecff3af35a841a77ab2e85fd87350abd36570`. Hash recorded; authenticity is not independently certified.
+- `bins/Pokemon - Emerald Version (USA, Europe).gba`: 16,777,216 bytes; title `POKEMON EMER`, game code `BPEE`; SHA-256 `a9dec84dfe7f62ab2220bafaef7479da0929d066ece16a6885f6226db19085af`.
 - ROM contains `FLASH1M_V103` and `SIIRTC_V001` signatures. Plan for 128 KiB banked Flash and cartridge GPIO RTC; verify behavior against tests and the cartridge protocol.
 - `cargo` and `rustc` are not currently on PATH. Check existing installations, then arrange a stable Rust toolchain before building.
 - Check availability of Linux windowing/audio, development packages, and graphical-session access. A headless environment can validate core behavior but cannot establish interactive audio/display quality.
@@ -115,9 +115,13 @@ This checkpoint is a proposed concrete definition of “playable,” not a claim
 
 See `docs/PROGRESS.md`, `docs/TESTING.md`, and `docs/ACCURACY.md`. The foundation
 is implemented and locally checked. The CPU/bus milestone is still in progress:
-standard checks pass, but independent reference mismatches remain. The BIOS
-currently stops at unsupported POSTFLG I/O; Emerald is not playable yet.
+standard checks pass, but independent reference mismatches remain. Provisional
+parts of milestones 2–4 now provide genuine BIOS boot, rendered Emerald intro/
+new-game dialogue, keyboard controls, Flash/RTC, saves, and an X11 desktop.
+This user-requested testable vertical slice does not accept those milestones'
+accuracy criteria or the first-release checkpoint. Audio, first battle,
+real in-game save/continue, and sustained interactive validation remain open.
 
 ## Work policy
 
-Implement one milestone at a time with tests and a short status report before moving on. Record provisional behavior and failing tests explicitly. Avoid game-specific hacks that bypass hardware semantics. Revisit the plan if hardware evidence contradicts an architectural assumption. The plan was approved before implementation; subsequent work follows these milestones.
+Normally implement one milestone at a time with tests and a short status report before moving on. The explicitly requested runnable preview may span provisional milestone work, with all unaccepted exit criteria kept open in the progress/accuracy ledgers. Record provisional behavior and failing tests explicitly. Avoid game-specific hacks that bypass hardware semantics. Revisit the plan if hardware evidence contradicts an architectural assumption. The plan was approved before implementation; subsequent work follows these milestones.

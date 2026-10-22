@@ -1,6 +1,7 @@
 use crate::arguments;
 use crate::arguments::Arguments;
 use gba_host::Session;
+use gba_host::screenshot;
 use std::env;
 use std::error::Error;
 use std::fs::{File, OpenOptions};
@@ -44,7 +45,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             })?;
         }
         if let Some(path) = &args.screenshot {
-            screenshot(path, machine.screen())?;
+            screenshot::write_ppm(path, machine.screen())?;
         }
         eprintln!(
             "frames={} clocks={} PC={:08x}",
@@ -78,7 +79,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         writer.flush()?;
     }
     if let Some(path) = &args.screenshot {
-        screenshot(path, machine.screen())?;
+        screenshot::write_ppm(path, machine.screen())?;
     }
     let cpu = machine.cpu();
     eprintln!(
@@ -100,14 +101,4 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     }
     session.flush_save()?;
     Ok(())
-}
-
-fn screenshot(path: &std::path::Path, pixels: &[u32]) -> Result<(), io::Error> {
-    use std::io::Write;
-    let mut file = BufWriter::new(OpenOptions::new().write(true).create_new(true).open(path)?);
-    file.write_all(b"P6\n240 160\n255\n")?;
-    for pixel in pixels {
-        file.write_all(&[(pixel >> 16) as u8, (pixel >> 8) as u8, *pixel as u8])?;
-    }
-    file.flush()
 }

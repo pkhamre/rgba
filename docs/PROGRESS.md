@@ -1,65 +1,72 @@
 # Implementation progress
 
-## Milestone 0 — foundation
+## Foundation
 
-Implemented and locally checked: pinned stable-Rust Cargo workspace and lockfile;
-core/headless separation; Google Rust style policy; rustfmt/Clippy/public-doc and
-safe-Rust lints; asset validation; bounded traces; CI configuration; synthetic
-tests; and pinned/licensed reference-vector fetching with integrity verification.
+Pinned Rust workspace, lockfile, Google Rust style policy, safe-Rust/public-doc
+lints, bounded runners, synthetic CI checks, licensed reference preparation,
+and small logical commits are in place. GitHub Actions is configured, not run
+here. The local isolated musl build uses an ignored Zig linker for dependency
+build scripts; normal Linux hosts use a native linker.
 
-GitHub Actions is configured, not executed here. The local isolated musl setup
-works without a C compiler. No graphical session is available.
+## CPU/bus: implementation present, accuracy acceptance still open
 
-## Milestone 1 — CPU and bus: still open
+ARM/Thumb interpreter, banked state, explicit pipeline, exceptions, memory map,
+baseline N/S/I timing, WAITCNT, multiply carry reconstruction, and independent
+CPU replay are implemented. BIOS initialization exposed an SPSR storage defect:
+arbitrary saved bits must be storable without switching the current mode.
+That correction has a synthetic BIOS regression and removes 3,053 strict
+reference failures.
 
-Implemented ARM/Thumb interpreter, pipeline/PC semantics, banked registers,
-status/exception entry and return, memory map/access quirks, and baseline N/S/I
-timing. The independent reference harness checks all 45 groups, now including
-transaction N/S access flags.
+Current standard checks: **106 Rust unit/integration tests, one doctest, and
+13 Python tests pass**. Both optional external tests are ignored by default.
+The isolated mGBA baseline passes 235/235 cases. Strict SingleStepTests comparison
+still fails: **2,124,072 matches / 125,928 failures** out of 2,250,000; 27 of 45
+groups match fully. The first diagnostics remain documented, not waived.
+See CPU_RESEARCH.md and UPSTREAM_CPU_TESTS.md for provenance and limits.
 
-Latest completed validation work:
+Physical reserved-encoding evidence, exact transactions/code-data/LOCK signals,
+internal-cycle placement, BIOS latch, open bus, prefetch, and contention remain
+open. No physical-GBA capture or complete hardware-test ROM was run.
 
-- Replaced constant-zero multiply carry with an attributed, licensed adaptation
-  of a hardware-researched Booth/carry-save model.
-- Fixed legacy PSR-test status restoration, with failing-before/passing-after
-  regressions and primary ARM data-sheet evidence.
-- Fixed internal-cycle instructions leaving the next code fetch Sequential.
-  ROM clock tests and reference N/S assertions cover the correction.
-- Added Undefined and absent-coprocessor vectoring and Thumb exception return.
-  All three coprocessor groups pass.
-- Added single-case replay, complete original-state inspection, failure TSVs,
-  and asset-free tests for classification/inspection tooling.
-- Categorized every current first diagnostic without suppressing any failures.
+## Testable vertical slice: provisional milestones 2–4
 
-Standard checks: 88 Rust unit/integration tests + one doctest + 13 Python tests
-pass. Full strict comparison: 2,121,019 matches / 128,981 failures; 27 of 45
-groups match completely. On the original scope there are 9,331 fewer failures.
-See CPU_RESEARCH.md for sources, exact categories, and limitations.
+The request for something testable led to provisional devices/presentation while
+CPU/bus accuracy work remains open. This does not accept the later milestones'
+hardware-validation exit criteria.
 
-An additional independent baseline now replays 235 mGBA suite carry, shifter,
-and multiply-long cases, all passing. Preparation verifies pinned MIT-licensed
-source blobs and retains the license. The test-only runner checks full flags,
-output registers, and exact bounded completion without changing the normal
-BIOS reset path. See UPSTREAM_CPU_TESTS.md. This is not the full ROM or a new
-physical-console capture.
+Implemented:
+- LCD line timing/status/IRQ, interrupt entry, timers/cascade, DMA triggers,
+  keypad, HALT progression, system I/O, and a scanline software renderer.
+- Normal BIOS boot to cartridge entry, with no boot/SWI bypass.
+- Banked 128 KiB Flash, ID/program/erase, GPIO RTC reads/control, SRAM, and
+  shared host save loading/atomic replacement/backups/error handling.
+- Linux X11/XWayland desktop, integer scaling, keyboard controls, pause,
+  fast-forward, screenshots, save flushing, and native frame-rate pacing.
+- Headless frame execution, screenshots, and scripted held-key changes.
 
-The CPU/bus milestone is not accepted as hardware-accurate. Classified first
-diagnostics do not prove complete correctness or resolve physical reserved-opcode
-behavior. The supplied BIOS still stops after four instructions at POSTFLG.
+Verified with the supplied local assets:
+- BIOS reaches `08000000` after 7,492,424 CPU activities / 75,998,009 clocks.
+- 4,000 scripted frames reach Professor Birch's new-game introduction.
+- Xvfb maps the desktop window; injected F12 works; captured window pixels
+  match the core framebuffer; Escape and bounded window runs exit successfully.
+- Synthetic save round-trip/backup/error tests pass; a real in-game save/
+  continue cycle has **not** yet been established.
 
-## Next work
+See TEST_BUILD.md for launch commands and explicit timing/rendering/RTC limits.
+No audio output or PSG synthesis exists. No hardware-accuracy claim follows
+from a successful game screenshot.
 
-1. Expand the independent baseline to memory/bus behavior and full-ROM tests,
-   with licensing and explicit completion. Establish physical evidence for
-   documented/reference disagreements; do not change aligned PC behavior just
-   to match internal reference snapshots.
-2. Audit full transactions beyond first failures: code/data/lock signals,
-   internal-cycle placement, BIOS latch, open bus, and GamePak prefetch.
-3. Expand early-termination multiply coverage and exception timing validation.
-4. Then milestone 2: deterministic event ordering, IRQ, timers, DMA, system I/O
-   including POSTFLG, display timing, and genuine BIOS boot.
-5. Continue the agreed graphics/desktop, Flash/RTC/saves, audio, and gameplay plan.
+## Next work and release gate
 
-No peripherals, BIOS bypass, or game-specific shortcut were added during this CPU
-validation work. Emerald is not playable; performance and interactive stability
-remain unverified.
+1. Continue independent CPU/bus and hardware-backed peripheral validation.
+2. Complete sound generation/mixing and Linux audio integration; test FIFO/
+   DMA/timer interactions before claiming audible correctness.
+3. Exercise player setup, controllable movement, the first battle, and genuine
+   Emerald save/restart/continue; turn findings into regressions.
+4. Compare video/audio against independent evidence; improve scanline/dot and
+   arbitration accuracy rather than treating provisional rendering as final.
+5. Profile on a named host and complete the 30-minute interactive release test.
+
+The approved first-release acceptance checkpoint remains open. This preview is
+ready for user testing, not certified for full-game compatibility or safe use of
+a sole valuable save.

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/gba-core", "crates/gba-headless", "crates/gba-host"]
+members = ["crates/gba-core", "crates/gba-headless", "crates/gba-host", "crates/gba-desktop"]
 resolver = "3"
 
 [workspace.package]
