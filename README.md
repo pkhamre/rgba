@@ -2,7 +2,7 @@
 
 A from-scratch Rust ARM7TDMI/GBA emulator targeting Linux desktop and hardware
 accuracy. **The desktop preview includes video, controls, pause indication,
-and audio.** The supplied BIOS boots normally. Game-menu save/restart/Continue
+and audio.** A user-provided BIOS boots normally. Game-menu save/restart/Continue
 is verified, and the first battle succeeded in user testing. Full-game and
 hardware accuracy remain unverified.
 
@@ -14,7 +14,10 @@ From a Linux X11 desktop, or Wayland desktop with XWayland:
 sh scripts/play.sh
 ```
 
-The BIOS is read from `bins/gba_bios.bin`; no game images are bundled. With no
+No BIOS or game images are bundled or tracked. The launcher looks for a BIOS
+at `$XDG_DATA_HOME/rgba/bios.bin` (default `~/.local/share/rgba/bios.bin`);
+`RGBA_BIOS` or `--bios PATH` can override it. For compatibility it also accepts
+a local, untracked `bins/gba_bios.bin` when the XDG default is absent. With no
 `--rom` argument, the desktop scans `$XDG_DATA_HOME/rgba/games` (default
 `~/.local/share/rgba/games`), starts its only game automatically, or shows a
 game chooser when there are multiple games. Put `.gba`, `.agb`, or `.bin` ROMs
@@ -79,13 +82,13 @@ own Cargo and native linker. Toolchains/build products are not committed.
 ```sh
 mkdir -p artifacts
 sh scripts/cargo.sh run --release -p gba-headless -- \
-  --bios bins/gba_bios.bin \
-  --rom "bins/Pokemon - Emerald Version (USA, Europe).gba" \
+  --bios "${XDG_DATA_HOME:-$HOME/.local/share}/rgba/bios.bin" \
+  --rom "path/to/game.gba" \
   --steps 8000000 --stop-at 08000000
 ```
 
-This reaches cartridge entry through the supplied BIOS, without replacing BIOS
-calls. `--stop-at` returns failure if the CPU-activity budget is exhausted first.
+This reaches cartridge entry through the user-provided BIOS, without replacing
+BIOS calls. `--stop-at` returns failure if the CPU-activity budget is exhausted first.
 Use `--frames N --screenshot new-file.ppm` for framebuffer capture,
 `--input FRAME:buttons` for held keys, and `--trace new-file.trace` for
 versioned activity traces (instructions, HALT, IRQ entry). Screenshot/trace files

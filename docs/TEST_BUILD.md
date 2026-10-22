@@ -23,13 +23,18 @@ For explicit asset paths instead of the convenience launcher:
 
 ```sh
 sh scripts/cargo.sh run --release -p gba-desktop -- \
-  --bios bins/gba_bios.bin \
+  --bios "${XDG_DATA_HOME:-$HOME/.local/share}/rgba/bios.bin" \
   --rom "path/to/game.gba"
 ```
 
 Arrows/WASD: D-pad. Z: A. X: B. Enter: Start. Backspace: Select. Q: L. E: R.
 Space: pause. Hold Tab: fast-forward. F5: flush cartridge save. F6/F7: save/load
 a machine state. F12: screenshot under `artifacts/` (binary PPM, never overwrite).
+The launcher looks for `$XDG_DATA_HOME/rgba/bios.bin` (default
+`~/.local/share/rgba/bios.bin`); `RGBA_BIOS` or `--bios PATH` overrides it. A
+local untracked `bins/gba_bios.bin` is a compatibility fallback, not a bundled
+asset.
+
 Escape opens the options menu; Escape closes it and B backs out one menu level.
 Back to Library flushes cartridge data before switching games. Exit or window
 close quits and attempts to flush cartridge data. State save/load results show
