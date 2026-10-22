@@ -72,7 +72,7 @@ Start with an interpreter and software rendering; defer JIT, parallel emulation,
 
 - Implement the detected Flash protocol, banking, IDs, erase/program operations, and relevant timing.
 - Implement GPIO RTC commands and time progression with deterministic test-time and configurable real-time policies.
-- Persist cartridge saves atomically; validate file size and preserve recoverable backups on failure. Cartridge saves are not emulator save states.
+- Persist cartridge saves atomically; validate file size and preserve recoverable backups on failure. Cartridge saves are distinct from emulator save states.
 - Add scripted key sequences and validate new-game flow, menus, movement, and a battle.
 - Exit: create an in-game save, close the emulator, restart, and continue successfully with matching player/location data; RTC behavior is tested.
 
@@ -108,8 +108,17 @@ This checkpoint is a proposed concrete definition of “playable,” not a claim
 - GB/GBC and Nintendo DS emulation.
 - Link-cable/wireless multiplayer and accessory emulation beyond Emerald's RTC.
 - Browser, Windows, and macOS frontends.
-- Save states, rewind, cheats, debugger GUI, gamepad support, and JIT.
+- Rewind, cheats, debugger GUI, gamepad support, and JIT.
 - Guaranteed compatibility with all GBA games or an unqualified cycle-perfect claim.
+
+## Agreed follow-up: desktop options and save states
+
+- Escape opens an in-window options menu. Escape from the menu returns to gameplay; an explicit Exit item flushes the cartridge save and quits.
+- Provide one atomic quick-save-state slot beside the ROM. State files are versioned and bound to the loaded ROM; loading validates fully before replacing the running machine.
+- A successful load restores the complete emulated machine and atomically synchronizes its cartridge backup to the configured `.sav`, preserving existing backup behavior. Cartridge saves and emulator states remain separate files.
+- Provide persistent runtime speed selection at 1x, 2x, and 4x; a fresh launch starts at 1x.
+- Provide a Keybinds submenu for all GBA buttons and emulator actions, including menu navigation, pause, fast-forward, state save/load, and exit. Persist bindings in a settings file beside the ROM. Reject duplicate bindings with a clear explanation and offer Reset Defaults.
+- Implement/test core state round trips and corrupt/incompatible state rejection before desktop integration. Then add settings persistence, key capture/conflict handling, menu UI, speed pacing, and desktop validation in separate logical steps.
 
 ## Current implementation status
 
@@ -123,7 +132,7 @@ accuracy criteria or the first-release checkpoint. Audio synthesis/playback is
 now implemented provisionally; real game-menu save/Continue cycles pass locally,
 and the first battle succeeded in user testing. A controlled real-time desktop
 soak passed; varied human gameplay/listening and hardware/reference validation
-remain open. Settings/remapping and save states are deferred follow-up requests.
+remain open. A desktop options menu, persistent key remapping, speed selection, and emulator save states are now agreed follow-up work; implementation has not started.
 
 ## Work policy
 
