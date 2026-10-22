@@ -1,6 +1,7 @@
 //! Bounded Linux audio transport through installed PipeWire/PulseAudio/ALSA tools.
 //! No host callbacks or device timing can advance the emulated clock.
 
+use crate::stream_format::StreamFormat;
 use std::io::{self, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
@@ -39,17 +40,7 @@ impl AudioOutput {
         );
         for candidate in candidates {
             let (program, args): (&str, &[&str]) = match *candidate {
-                "pipewire" => (
-                    "pw-cat",
-                    &[
-                        "--playback",
-                        "--rate=32768",
-                        "--channels=2",
-                        "--format=s16",
-                        "--latency=80ms",
-                        "-",
-                    ],
-                ),
+                "pipewire" => ("pw-cat", &["--playback", "--latency=80ms", "-"]),
                 "pulse" => (
                     "pacat",
                     &[
@@ -76,7 +67,12 @@ impl AudioOutput {
             };
             let mut command = Command::new(program);
             command.args(args);
-            match Self::spawn(command) {
+            let format = if *candidate == "pipewire" {
+                StreamFormat::AuBigEndian
+            } else {
+                StreamFormat::RawLittleEndian
+            };
+            match Self::spawn(command, format) {
                 Ok(mut output) => {
                     // Catch immediate connection/CLI failures before trying the next tool.
                     thread::sleep(std::time::Duration::from_millis(40));
@@ -95,7 +91,7 @@ impl AudioOutput {
         )))
     }
 
-    fn spawn(mut command: Command) -> io::Result<Self> {
+    fn spawn(mut command: Command, format: StreamFormat) -> io::Result<Self> {
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -112,12 +108,18 @@ impl AudioOutput {
         let thread_failed = Arc::clone(&failed);
         let worker = thread::spawn(move || {
             let mut filter = HighPass::default();
+            if let Err(error) = pipe.write_all(format.header()) {
+                if !thread_failed.swap(true, Ordering::Relaxed) {
+                    eprintln!("Audio stream header failed: {error}");
+                }
+                return;
+            }
             while let Ok(samples) = receiver.recv() {
                 if thread_muted.load(Ordering::Relaxed) {
                     filter = HighPass::default();
                     continue;
                 }
-                let bytes = filter.encode(&samples);
+                let bytes = filter.encode(&samples, format);
                 if let Err(error) = pipe.write_all(&bytes) {
                     if !thread_failed.swap(true, Ordering::Relaxed) {
                         eprintln!(
@@ -201,7 +203,7 @@ struct HighPass {
     state: [i32; 2],
 }
 impl HighPass {
-    fn encode(&mut self, samples: &[[i16; 2]]) -> Vec<u8> {
+    fn encode(&mut self, samples: &[[i16; 2]], format: StreamFormat) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(samples.len() * 4);
         for frame in samples {
             for (side, sample) in frame.iter().enumerate() {
@@ -210,7 +212,7 @@ impl HighPass {
                     + ((i64::from(self.state[side]) * 65500) / 65536) as i32;
                 self.previous[side] = value;
                 let filtered = self.state[side].clamp(-32768, 32767) as i16;
-                bytes.extend_from_slice(&filtered.to_le_bytes());
+                bytes.extend_from_slice(&format.sample(filtered));
             }
         }
         bytes
@@ -222,21 +224,51 @@ mod tests {
     #[test]
     fn filter_is_stereo_little_endian_and_removes_dc() {
         let mut f = super::HighPass::default();
-        assert_eq!(f.encode(&[[0x1234, -2]]), [0x34, 0x12, 0xfe, 0xff]);
-        let output = f.encode(&vec![[0x1234, -2]; 32768]);
+        let format = crate::stream_format::StreamFormat::RawLittleEndian;
+        assert_eq!(f.encode(&[[0x1234, -2]], format), [0x34, 0x12, 0xfe, 0xff]);
+        let output = f.encode(&vec![[0x1234, -2]; 32768], format);
         assert_eq!(&output[output.len() - 4..], &[0; 4]);
     }
     #[test]
+    fn au_payload_is_big_endian_after_filtering() {
+        let input = [[1000, -1000], [0x1234, -2], [0, 0], [-300, 300]];
+        let raw = super::HighPass::default()
+            .encode(&input, crate::stream_format::StreamFormat::RawLittleEndian);
+        let au = super::HighPass::default()
+            .encode(&input, crate::stream_format::StreamFormat::AuBigEndian);
+        assert_eq!(&au[..4], &[3, 232, 252, 24]);
+        let decode = |bytes: &[u8], big: bool| {
+            bytes
+                .chunks_exact(2)
+                .map(|pair| {
+                    let pair = pair.try_into().expect("sample");
+                    if big {
+                        i16::from_be_bytes(pair)
+                    } else {
+                        i16::from_le_bytes(pair)
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(decode(&au, true), decode(&raw, false));
+    }
+
+    #[test]
     fn missing_player_and_invalid_backend_are_recoverable() {
         let command = std::process::Command::new("gba-audio-player-does-not-exist");
-        assert!(super::AudioOutput::spawn(command).is_err());
+        assert!(
+            super::AudioOutput::spawn(command, crate::stream_format::StreamFormat::RawLittleEndian)
+                .is_err()
+        );
         assert!(super::AudioOutput::open("invalid").is_err());
     }
     #[test]
     fn stalled_player_does_not_block_emulation_or_shutdown() {
         let mut command = std::process::Command::new("sh");
         command.args(["-c", "while :; do :; done"]);
-        let mut output = super::AudioOutput::spawn(command).expect("test child");
+        let mut output =
+            super::AudioOutput::spawn(command, crate::stream_format::StreamFormat::RawLittleEndian)
+                .expect("test child");
         let start = std::time::Instant::now();
         for _ in 0..100 {
             output.submit(vec![[0, 0]; 1024]);

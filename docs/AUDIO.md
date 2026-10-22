@@ -42,8 +42,11 @@ If tools/devices are unavailable, the window continues silently with a terminal
 warning. Device/player failures do not stop guest execution.
 
 A worker applies a deterministic host-side DC-blocking high-pass filter and
-writes stereo signed-16 little-endian PCM. The player resamples to the device
-rate. At most eight packets (each capped at 2,048 frames) are queued; a full queue
+writes stereo signed-16 PCM. Pulse/ALSA receive raw little-endian samples;
+PipeWire receives self-describing AU with big-endian samples, a 24-byte header,
+and the standard unknown-length marker. There is no RIFF file-length ceiling
+or dependence on a version-specific `pw-cat --raw` option. The player resamples
+to the device rate. At most eight packets (each capped at 2,048 frames) are queued; a full queue
 drops output instead of blocking or changing emulated time. Drop counts are
 reported on exit. OS/player buffers add latency beyond this queue; 80 ms is
 requested, not guaranteed. PulseAudio also requests 20 ms processing intervals.
@@ -66,4 +69,20 @@ A 120-frame Xvfb + ALSA-null run produced 65,835 PCM frames with zero core/host
 queue drops. Null-device output tests transport, not speakers or sound quality.
 A longer controlled soak and latest-build repeat are documented with their
 build/configuration distinctions in VALIDATION.md. PipeWire flags were checked
-against current/Bookworm documentation; no live PipeWire server was tested here.
+against current/Bookworm documentation. A user then demonstrated that the old
+headerless input was rejected by libsndfile (`Format not recognised`), despite
+working MP3 playback and a healthy PipeWire service. Explicit sample-format
+arguments did not select raw decoding. This was an integration defect.
+
+The AU fix passed an asset-free 10-second tone probe against actual PipeWire /
+pw-cat 0.3.65 with a 48 kHz virtual sink and manually linked stereo ports:
+zero host queue drops and no decoding error. This checks parsing/transport,
+not speakers or real-device underruns. `auto` still needs late-failure recovery
+beyond its original 40 ms startup check; that is separate from framing.
+
+Probe without loading a game (quiet 256 Hz stereo test tone):
+```sh
+sh scripts/cargo.sh run --release -p gba-host --example audio_probe -- pipewire 3
+```
+AU framing reference: https://www.mmsp.ece.mcgill.ca/Documents/AudioFormats/AU/AU.html
+and libsndfile 1.2.0 `src/au.c` (read as reference; no code imported).

@@ -3,6 +3,7 @@
 pub mod audio_output;
 pub mod screenshot;
 mod session;
+mod stream_format;
 pub mod wav;
 
 pub use session::Session;
