@@ -5,6 +5,7 @@ mod desktop;
 mod frame_cache;
 mod frame_pacing;
 mod game_library;
+mod gamepad;
 mod keybindings;
 mod library_window;
 mod menu;

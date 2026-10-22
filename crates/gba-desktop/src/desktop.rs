@@ -2,6 +2,8 @@ use crate::arguments;
 use crate::arguments::Arguments;
 use crate::frame_cache::FrameCache;
 use crate::frame_pacing::FramePacing;
+use crate::keybindings::{Action, KeyBindings};
+use crate::menu::{Command, MenuState};
 use crate::overlay;
 use crate::presentation::Presentation;
 use gba_host::Session;
@@ -270,8 +272,9 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<RunOutcome, Box
             eprintln!("Ignoring unreadable key settings: {error}");
         }
     }
-    let mut menu = crate::menu::MenuState::default();
+    let mut menu = MenuState::default();
     let mut menu_open = false;
+    let mut gamepad = crate::gamepad::GamepadInput::new();
     let mut state_notice = None;
     let mut held = [false; 256];
     let mut paused = false;
@@ -290,6 +293,17 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<RunOutcome, Box
     let mut last_write = Instant::now();
     let mut revision = session.machine().save_revision();
     while running {
+        let gamepad_poll = gamepad.poll();
+        if gamepad_poll.menu_pressed && !menu_open {
+            menu = MenuState::default();
+            if let Some(warning) = settings_warning.take() {
+                menu.set_status(warning);
+            }
+            menu_open = true;
+            fast = false;
+            set_window_title(&connection, window, protocols, delete, &title, true, paused)?;
+        }
+        let menu_was_open = menu_open;
         let mut events = Vec::new();
         while let Some(event) = connection.poll_for_event()? {
             events.push(event);
@@ -317,88 +331,29 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<RunOutcome, Box
                     }
                     if menu_open {
                         let command = menu.handle_key(symbol, &mut bindings);
-                        match command {
-                            crate::menu::Command::None => {}
-                            crate::menu::Command::Resume => {
-                                menu_open = false;
-                                held.fill(false);
-                                set_window_title(
-                                    &connection,
-                                    window,
-                                    protocols,
-                                    delete,
-                                    &title,
-                                    false,
-                                    paused,
-                                )?;
-                            }
-                            crate::menu::Command::BackToLibrary => {
-                                if flush_save(session) {
-                                    return_to_library = true;
-                                    running = false;
-                                } else {
-                                    menu.set_status("SAVE FAILED - SWITCH CANCELLED");
-                                }
-                            }
-                            crate::menu::Command::Exit => {
-                                if flush_save(session) {
-                                    running = false;
-                                } else {
-                                    menu.set_status("SAVE FAILED - EXIT CANCELLED");
-                                }
-                            }
-                            crate::menu::Command::SaveState => match session.save_state() {
-                                Ok(()) => {
-                                    menu.set_status("STATE SAVED");
-                                    set_state_notice(&mut state_notice, "STATE SAVED", true);
-                                    eprintln!("Save state: {}", session.state_path().display());
-                                }
-                                Err(error) => {
-                                    menu.set_status("STATE SAVE FAILED");
-                                    set_state_notice(&mut state_notice, "SAVE FAILED", false);
-                                    eprintln!("Save-state write failed: {error}");
-                                }
-                            },
-                            crate::menu::Command::LoadState => match session.load_state() {
-                                Ok(()) => {
-                                    menu.set_status("STATE LOADED");
-                                    set_state_notice(&mut state_notice, "STATE LOADED", true);
-                                    if let Some(output) = &mut audio {
-                                        output.reset_after_state_load();
-                                    }
-                                    eprintln!("Loaded state: {}", session.state_path().display());
-                                    revision = session.machine().save_revision();
-                                }
-                                Err(error) => {
-                                    menu.set_status("STATE LOAD FAILED");
-                                    set_state_notice(&mut state_notice, "LOAD FAILED", false);
-                                    eprintln!("Save-state load failed: {error}");
-                                }
-                            },
-                            crate::menu::Command::SettingsChanged => {
-                                match session.write_settings(bindings.encode().as_bytes()) {
-                                    Ok(()) => {
-                                        menu.set_status("SETTINGS SAVED");
-                                        settings_warning = None;
-                                    }
-                                    Err(error) => {
-                                        menu.set_status("SETTINGS WRITE FAILED");
-                                        eprintln!("Key settings write failed: {error}");
-                                    }
-                                }
-                            }
-                        }
-                        if !menu_open {
-                            set_window_title(
-                                &connection,
+                        handle_menu_command(
+                            MenuRuntime {
+                                connection: &connection,
                                 window,
                                 protocols,
                                 delete,
-                                &title,
-                                false,
+                                title: &title,
+                                session,
+                                audio: &mut audio,
+                                gamepad: &mut gamepad,
+                                menu: &mut menu,
+                                bindings: &mut bindings,
+                                menu_open: &mut menu_open,
+                                held: &mut held,
+                                state_notice: &mut state_notice,
+                                settings_warning: &mut settings_warning,
                                 paused,
-                            )?;
-                        }
+                                revision: &mut revision,
+                                running: &mut running,
+                                return_to_library: &mut return_to_library,
+                            },
+                            command,
+                        )?;
                         continue;
                     }
                     match bindings.action_for(symbol) {
@@ -493,13 +448,48 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<RunOutcome, Box
                 _ => {}
             }
         }
+        if menu_open && running {
+            for action in gamepad_poll.pressed_actions.iter().copied() {
+                if gamepad_poll.menu_pressed && matches!(action, Action::Start | Action::Select) {
+                    continue;
+                }
+                let command = menu.handle_gamepad_action(action, &mut bindings);
+                handle_menu_command(
+                    MenuRuntime {
+                        connection: &connection,
+                        window,
+                        protocols,
+                        delete,
+                        title: &title,
+                        session,
+                        audio: &mut audio,
+                        gamepad: &mut gamepad,
+                        menu: &mut menu,
+                        bindings: &mut bindings,
+                        menu_open: &mut menu_open,
+                        held: &mut held,
+                        state_notice: &mut state_notice,
+                        settings_warning: &mut settings_warning,
+                        paused,
+                        revision: &mut revision,
+                        running: &mut running,
+                        return_to_library: &mut return_to_library,
+                    },
+                    command,
+                )?;
+                if !menu_open || !running {
+                    break;
+                }
+            }
+        }
         if !running {
             break;
         }
-        let buttons = if menu_open {
+        let buttons = if menu_open || menu_was_open {
             0
         } else {
             bindings.button_mask(&held, minimum_keycode, columns, &mapping.keysyms)
+                | gamepad_poll.buttons
         };
         session.machine_mut().set_keys(buttons);
         if !paused && !menu_open {
@@ -664,6 +654,104 @@ fn set_window_title(
             &[delete],
         )?
         .check()?;
+    Ok(())
+}
+
+struct MenuRuntime<'a> {
+    connection: &'a RustConnection,
+    window: u32,
+    protocols: u32,
+    delete: u32,
+    title: &'a str,
+    session: &'a mut Session,
+    audio: &'a mut Option<AudioOutput>,
+    gamepad: &'a mut crate::gamepad::GamepadInput,
+    menu: &'a mut MenuState,
+    bindings: &'a mut KeyBindings,
+    menu_open: &'a mut bool,
+    held: &'a mut [bool; 256],
+    state_notice: &'a mut Option<StateNotice>,
+    settings_warning: &'a mut Option<String>,
+    paused: bool,
+    revision: &'a mut u64,
+    running: &'a mut bool,
+    return_to_library: &'a mut bool,
+}
+
+fn handle_menu_command(runtime: MenuRuntime<'_>, command: Command) -> Result<(), Box<dyn Error>> {
+    match command {
+        Command::None => {}
+        Command::Resume => {
+            *runtime.menu_open = false;
+            runtime.held.fill(false);
+            runtime.gamepad.suppress_held();
+            set_window_title(
+                runtime.connection,
+                runtime.window,
+                runtime.protocols,
+                runtime.delete,
+                runtime.title,
+                false,
+                runtime.paused,
+            )?;
+        }
+        Command::BackToLibrary => {
+            if flush_save(runtime.session) {
+                *runtime.return_to_library = true;
+                *runtime.running = false;
+            } else {
+                runtime.menu.set_status("SAVE FAILED - SWITCH CANCELLED");
+            }
+        }
+        Command::Exit => {
+            if flush_save(runtime.session) {
+                *runtime.running = false;
+            } else {
+                runtime.menu.set_status("SAVE FAILED - EXIT CANCELLED");
+            }
+        }
+        Command::SaveState => match runtime.session.save_state() {
+            Ok(()) => {
+                runtime.menu.set_status("STATE SAVED");
+                set_state_notice(runtime.state_notice, "STATE SAVED", true);
+                eprintln!("Save state: {}", runtime.session.state_path().display());
+            }
+            Err(error) => {
+                runtime.menu.set_status("STATE SAVE FAILED");
+                set_state_notice(runtime.state_notice, "SAVE FAILED", false);
+                eprintln!("Save-state write failed: {error}");
+            }
+        },
+        Command::LoadState => match runtime.session.load_state() {
+            Ok(()) => {
+                runtime.menu.set_status("STATE LOADED");
+                set_state_notice(runtime.state_notice, "STATE LOADED", true);
+                if let Some(output) = runtime.audio {
+                    output.reset_after_state_load();
+                }
+                eprintln!("Loaded state: {}", runtime.session.state_path().display());
+                *runtime.revision = runtime.session.machine().save_revision();
+            }
+            Err(error) => {
+                runtime.menu.set_status("STATE LOAD FAILED");
+                set_state_notice(runtime.state_notice, "LOAD FAILED", false);
+                eprintln!("Save-state load failed: {error}");
+            }
+        },
+        Command::SettingsChanged => match runtime
+            .session
+            .write_settings(runtime.bindings.encode().as_bytes())
+        {
+            Ok(()) => {
+                runtime.menu.set_status("SETTINGS SAVED");
+                *runtime.settings_warning = None;
+            }
+            Err(error) => {
+                runtime.menu.set_status("SETTINGS WRITE FAILED");
+                eprintln!("Key settings write failed: {error}");
+            }
+        },
+    }
     Ok(())
 }
 

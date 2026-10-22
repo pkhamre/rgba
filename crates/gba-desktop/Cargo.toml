@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+evdev = "0.13.2"
 gba-host = { path = "../gba-host" }
 sha2 = "0.10.9"
 x11rb = { version = "0.13.2", default-features = false, features = ["render"] }

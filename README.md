@@ -33,6 +33,14 @@ cartridge save, or Exit to quit. The menu configures bindings. State saves and
 loads show a brief on-screen result notice.
 Hold Tab through boot/intro if desired; use Enter at the title and Z to confirm.
 
+USB gamepads are detected through Linux evdev when the emulator starts, and
+newly connected pads are detected while it is running. The D-pad and left stick
+control movement; the bottom face button maps to GBA A, the right face button
+to B, and the left/right shoulder buttons to L/R. Start + Select opens the
+options menu; use the D-pad to navigate, A/Start to select, and B to go back.
+The current implementation requires read access to the controller's
+`/dev/input/event*` device.
+
 Saves and states are stored under `$XDG_DATA_HOME/rgba` (default
 `~/.local/share/rgba`); settings are under `$XDG_CONFIG_HOME/rgba` (default
 `~/.config/rgba`). Per-game filenames use the ROM's SHA-256 identity. ROM-side saves, states, and settings are copied on first launch and retained;

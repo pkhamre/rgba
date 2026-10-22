@@ -64,7 +64,21 @@ impl MenuState {
             return Command::None;
         }
 
-        let action = bindings.action_for(symbol);
+        self.handle_action(bindings.action_for(symbol), bindings)
+    }
+
+    pub(crate) fn handle_gamepad_action(
+        &mut self,
+        action: Action,
+        bindings: &mut KeyBindings,
+    ) -> Command {
+        if self.capture.is_some() {
+            return Command::None;
+        }
+        self.handle_action(Some(action), bindings)
+    }
+
+    fn handle_action(&mut self, action: Option<Action>, bindings: &mut KeyBindings) -> Command {
         if action == Some(Action::Exit) {
             return Command::Exit;
         }
@@ -329,6 +343,20 @@ mod tests {
         assert_eq!(menu.handle_key(0xff0d, &mut bindings), Command::None);
         assert_eq!(menu.handle_key(0xff1b, &mut bindings), Command::None);
         assert_eq!(menu.handle_key(0xff1b, &mut bindings), Command::Resume);
+    }
+
+    #[test]
+    fn gamepad_actions_navigate_and_activate_the_options_menu() {
+        let mut menu = MenuState::default();
+        let mut bindings = KeyBindings::default();
+        assert_eq!(
+            menu.handle_gamepad_action(Action::Down, &mut bindings),
+            Command::None
+        );
+        assert_eq!(
+            menu.handle_gamepad_action(Action::A, &mut bindings),
+            Command::LoadState
+        );
     }
 
     #[test]
