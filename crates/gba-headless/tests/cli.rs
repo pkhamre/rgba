@@ -107,7 +107,7 @@ fn unreachable_stop_address_returns_failure_not_success() {
 fn unsupported_io_returns_a_terminal_error_with_instruction_location() {
     let directory = RunDirectory::new();
     let mut bios = vec![0; 0x4000];
-    for (index, opcode) in [0xe3a0_0301u32, 0xe590_1000].into_iter().enumerate() {
+    for (index, opcode) in [0xe3a0_0301u32, 0xe590_1400].into_iter().enumerate() {
         bios[index * 4..index * 4 + 4].copy_from_slice(&opcode.to_le_bytes());
     }
     fs::write(directory.path.join("bios.bin"), bios).expect("I/O program fixture");
@@ -115,7 +115,7 @@ fn unsupported_io_returns_a_terminal_error_with_instruction_location() {
     assert!(!output.status.success());
     let message = String::from_utf8_lossy(&output.stderr);
     assert!(message.contains("next=00000004"));
-    assert!(message.contains("unimplemented I/O read at 04000000"));
+    assert!(message.contains("unimplemented I/O read at 04000400"));
 }
 
 #[test]
@@ -125,5 +125,7 @@ fn help_needs_no_assets() {
         .output()
         .expect("runner launches");
     assert!(output.status.success());
-    assert!(String::from_utf8_lossy(&output.stdout).contains("not yet a playable emulator"));
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("audio output is not yet implemented")
+    );
 }

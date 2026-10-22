@@ -1,4 +1,6 @@
 use crate::EmulatorError;
+use crate::hardware::Hardware;
+use crate::ppu::Ppu;
 
 /// Whether a bus cycle continues a sequential transfer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +52,9 @@ pub struct Bus {
     open_bus: u32,
     bios_latch: u32,
     execution_address: u32,
+    pub(crate) hardware: Hardware,
+    pub(crate) ppu: Ppu,
+    memory_control: u32,
 }
 
 impl Bus {
@@ -76,6 +81,9 @@ impl Bus {
             open_bus: 0,
             bios_latch: 0,
             execution_address: 0,
+            hardware: Hardware::default(),
+            ppu: Ppu::default(),
+            memory_control: 0x0d00_0020,
         })
     }
 
@@ -86,7 +94,7 @@ impl Bus {
     }
 
     pub(crate) fn internal_cycles(&mut self, count: u64) {
-        self.clocks += count;
+        self.advance(count);
     }
 
     pub(crate) fn set_execution_address(&mut self, address: u32) {
@@ -101,7 +109,7 @@ impl Bus {
         kind: AccessKind,
     ) -> Result<u32, EmulatorError> {
         let address = address & !(width.bytes() - 1);
-        self.clocks += self.access_cycles(address, width, kind);
+        self.advance(self.access_cycles(address, width, kind));
         if address >> 24 == 4 {
             return self.read_io(address, width);
         }
@@ -141,7 +149,7 @@ impl Bus {
         kind: AccessKind,
     ) -> Result<(), EmulatorError> {
         let address = address & !(width.bytes() - 1);
-        self.clocks += self.access_cycles(address, width, kind);
+        self.advance(self.access_cycles(address, width, kind));
         if address >> 24 == 4 {
             return self.write_io(address, width, value);
         }
@@ -263,24 +271,115 @@ impl Bus {
         }
     }
 
+    pub(crate) fn advance(&mut self, mut cycles: u64) {
+        while cycles != 0 {
+            let step = cycles.min(self.hardware.next_event());
+            self.clocks += step;
+            self.hardware.advance_timers(step);
+            self.hardware.line_clock += step as u16;
+            if self.hardware.line_clock == 960 && self.hardware.line < 160 {
+                self.ppu.render_line(
+                    self.hardware.line as usize,
+                    &self.hardware.registers,
+                    &self.palette,
+                    &self.video_ram,
+                    &self.object_ram,
+                );
+            }
+            self.hardware.display_edge();
+            cycles -= step;
+        }
+    }
+
+    pub(crate) fn service_dma(&mut self) -> Result<(), EmulatorError> {
+        while let Some(channel) = (0..4).find(|index| self.hardware.dma[*index].pending) {
+            self.hardware.dma[channel].pending = false;
+            let base = 0xb0 + channel * 12;
+            let control = self.hardware.half(base + 10);
+            if control & 0x8000 == 0 {
+                continue;
+            }
+            let fifo = (1..=2).contains(&channel) && control & 0x3000 == 0x3000;
+            let width = if fifo || control & 0x400 != 0 {
+                AccessWidth::Word
+            } else {
+                AccessWidth::Halfword
+            };
+            let stride = width.bytes();
+            let raw_count =
+                self.hardware.half(base + 8) as u32 & if channel == 3 { 0xffff } else { 0x3fff };
+            let count = if fifo {
+                4
+            } else if raw_count == 0 {
+                if channel == 3 { 0x10000 } else { 0x4000 }
+            } else {
+                raw_count
+            };
+            let mut source = self.hardware.dma[channel].source & !(stride - 1);
+            let mut destination = self.hardware.dma[channel].destination & !(stride - 1);
+            self.advance(2);
+            for index in 0..count {
+                let access = if index == 0 {
+                    AccessKind::Nonsequential
+                } else {
+                    AccessKind::Sequential
+                };
+                let value = self.read(source, width, access)?;
+                self.write(destination, width, value, access)?;
+                source = match (control >> 7) & 3 {
+                    1 => source.wrapping_sub(stride),
+                    2 => source,
+                    _ => source.wrapping_add(stride),
+                };
+                if !fifo {
+                    destination = match (control >> 5) & 3 {
+                        1 => destination.wrapping_sub(stride),
+                        2 => destination,
+                        _ => destination.wrapping_add(stride),
+                    };
+                }
+            }
+            self.hardware.dma[channel].source = source;
+            self.hardware.dma[channel].destination = if control & 0x60 == 0x60 {
+                self.hardware.dma[channel].initial_destination
+            } else {
+                destination
+            };
+            self.hardware.dma[channel].pending = false;
+            if control & 0x4000 != 0 {
+                self.hardware.interrupt(1 << (8 + channel));
+            }
+            if control & 0x200 == 0 || control & 0x3000 == 0 {
+                self.hardware.set_half(base + 10, control & !0x8000);
+            }
+        }
+        Ok(())
+    }
+
     fn read_io(&self, address: u32, width: AccessWidth) -> Result<u32, EmulatorError> {
-        let value = match (address & !1, width) {
-            (0x0400_0204, AccessWidth::Byte | AccessWidth::Halfword) => {
-                u32::from(self.wait_control)
-            }
-            (0x0400_0130, AccessWidth::Byte | AccessWidth::Halfword) => 0x03ff,
-            _ => {
-                return Err(EmulatorError::UnsupportedIo {
-                    address,
-                    write: false,
+        if address == 0x0400_0410 {
+            return Ok(0xff);
+        }
+        if (0x0400_0800..0x0400_0804).contains(&address) {
+            return Ok((self.memory_control >> ((address & 3) * 8))
+                & match width {
+                    AccessWidth::Byte => 0xff,
+                    AccessWidth::Halfword => 0xffff,
+                    AccessWidth::Word => u32::MAX,
                 });
-            }
-        };
-        Ok(if width == AccessWidth::Byte {
-            (value >> ((address & 1) * 8)) & 0xff
-        } else {
-            value
-        })
+        }
+        let offset = (address - 0x0400_0000) as usize;
+        if offset + width.bytes() as usize > 0x400 {
+            return Err(EmulatorError::UnsupportedIo {
+                address,
+                write: false,
+            });
+        }
+        let mut value = 0;
+        for byte in 0..width.bytes() as usize {
+            value |= u32::from(self.hardware.read_byte(offset + byte)) << (byte * 8);
+        }
+        Ok(value)
     }
 
     fn write_io(
@@ -289,18 +388,37 @@ impl Bus {
         width: AccessWidth,
         value: u32,
     ) -> Result<(), EmulatorError> {
-        if address & !1 != 0x0400_0204 || width == AccessWidth::Word {
+        if address == 0x0400_0410 {
+            return Ok(());
+        }
+        if (0x0400_0800..0x0400_0804).contains(&address) {
+            let shift = (address & 3) * 8;
+            let mask = match width {
+                AccessWidth::Byte => 0xff,
+                AccessWidth::Halfword => 0xffff,
+                AccessWidth::Word => u32::MAX,
+            };
+            self.memory_control =
+                (self.memory_control & !(mask << shift)) | ((value & mask) << shift);
+            return Ok(());
+        }
+        let offset = (address - 0x0400_0000) as usize;
+        if offset + width.bytes() as usize > 0x400 {
             return Err(EmulatorError::UnsupportedIo {
                 address,
                 write: true,
             });
         }
-        self.wait_control = if width == AccessWidth::Halfword {
-            value as u16
-        } else {
-            let shift = (address & 1) * 8;
-            (self.wait_control & !(0xff << shift)) | (((value & 0xff) << shift) as u16)
-        } & 0x5fff;
+        for byte in 0..width.bytes() as usize {
+            self.hardware.write_byte(
+                offset + byte,
+                (value >> (byte * 8)) as u8,
+                self.execution_address < 0x4000,
+            );
+            self.ppu.io_written(&self.hardware.registers, offset + byte);
+        }
+        self.wait_control = self.hardware.half(0x204) & 0x5fff;
+        self.hardware.set_half(0x204, self.wait_control);
         Ok(())
     }
 }
@@ -361,6 +479,19 @@ mod tests {
     fn write(bus: &mut Bus, address: u32, width: AccessWidth, value: u32) {
         bus.write(address, width, value, AccessKind::Nonsequential)
             .expect("implemented memory");
+    }
+
+    #[test]
+    fn immediate_dma_copies_words_and_requests_irq() {
+        let mut bus = bus();
+        write(&mut bus, 0x0300_0000, AccessWidth::Word, 0x1234_5678);
+        write(&mut bus, 0x0400_00b0, AccessWidth::Word, 0x0300_0000);
+        write(&mut bus, 0x0400_00b4, AccessWidth::Word, 0x0200_0000);
+        write(&mut bus, 0x0400_00b8, AccessWidth::Word, 0xc400_0001);
+        bus.service_dma().expect("DMA performs real bus transfers");
+        assert_eq!(read(&mut bus, 0x0200_0000, AccessWidth::Word), 0x1234_5678);
+        assert_eq!(bus.hardware.half(0x202), 1 << 8);
+        assert_eq!(bus.hardware.half(0xba) & 0x8000, 0);
     }
 
     #[test]
@@ -471,7 +602,7 @@ mod tests {
         let mut bus = bus();
         assert!(matches!(
             bus.read(
-                0x0400_0006,
+                0x0400_0404,
                 AccessWidth::Halfword,
                 AccessKind::Nonsequential
             ),

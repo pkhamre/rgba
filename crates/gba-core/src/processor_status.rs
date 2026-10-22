@@ -52,6 +52,10 @@ impl ProcessorStatus {
         }
     }
 
+    pub(crate) fn saved_bits(bits: u32) -> Self {
+        Self(bits)
+    }
+
     /// Raw status bits, including control and arithmetic flags.
     #[must_use]
     pub fn bits(self) -> u32 {

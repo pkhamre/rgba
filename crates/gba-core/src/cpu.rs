@@ -3,7 +3,8 @@ use crate::alu::{ArithmeticResult, ShiftKind, ShiftSource};
 use crate::multiply;
 use crate::multiply::MultiplyKind;
 use crate::{
-    AccessKind, AccessWidth, CpuBus, EmulatorError, ProcessorMode, ProcessorStatus, StepTrace,
+    AccessKind, AccessWidth, CpuBus, EmulatorError, ProcessorMode, ProcessorStatus, StepKind,
+    StepTrace,
 };
 
 /// ARM7TDMI interpreter with explicit two-entry prefetch state and banked registers.
@@ -101,6 +102,7 @@ impl Cpu {
             self.pipeline = Some([next, fetched]);
         }
         Ok(StepTrace {
+            kind: StepKind::Instruction,
             address,
             opcode,
             thumb,
@@ -110,6 +112,16 @@ impl Cpu {
             registers: self.registers(),
             status: self.status.bits(),
         })
+    }
+
+    pub(crate) fn take_irq(&mut self, bus: &mut impl CpuBus) -> Result<bool, EmulatorError> {
+        if self.status.irq_disabled() {
+            return Ok(false);
+        }
+        self.exception(ProcessorMode::Irq, 0x18, self.address.wrapping_add(4));
+        bus.internal_cycles(1);
+        self.refill(bus)?;
+        Ok(true)
     }
 
     fn refill(&mut self, bus: &mut impl CpuBus) -> Result<(), EmulatorError> {
@@ -177,11 +189,12 @@ impl Cpu {
         self.status = status;
     }
 
-    fn restore_status(&mut self) {
+    fn restore_status(&mut self) -> Result<(), EmulatorError> {
         let bank = self.status.mode().bank();
         if bank != 0 {
-            self.replace_status(self.saved_status[bank]);
+            self.replace_status(ProcessorStatus::try_new(self.saved_status[bank].bits())?);
         }
+        Ok(())
     }
 
     fn exception(&mut self, mode: ProcessorMode, vector: u32, return_address: u32) {
@@ -346,7 +359,7 @@ impl Cpu {
             if bank != 0 {
                 let old = self.saved_status[bank].bits();
                 self.saved_status[bank] =
-                    ProcessorStatus::try_new((old & !mask) | (operand & mask))?;
+                    ProcessorStatus::saved_bits((old & !mask) | (operand & mask));
             }
         } else {
             mask &= !0x20; // MSR cannot exchange instruction sets.
@@ -404,7 +417,7 @@ impl Cpu {
             if destination == 15 && (test || self.status.mode().bank() != 0) {
                 // Legacy {P} test encodings restore SPSR without writing PC.
                 // In User/System there is no SPSR, so this is a no-op.
-                self.restore_status();
+                self.restore_status()?;
             } else if let Some(result) = arithmetic {
                 self.arithmetic_flags(result);
             } else {
@@ -711,7 +724,7 @@ impl Cpu {
         }
         self.next_fetch = AccessKind::Nonsequential;
         if restore {
-            self.restore_status();
+            self.restore_status()?;
         }
         if let Some(target) = loaded_pc {
             self.branch(target);

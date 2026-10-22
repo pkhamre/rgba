@@ -228,6 +228,19 @@ fn undefined_handler_can_restore_thumb_execution() {
 }
 
 #[test]
+fn bios_can_clear_spsr_without_selecting_an_invalid_current_mode() {
+    let (mut cpu, mut bus) = fixture(&[0xe169_f000, 0xe14f_1000], false);
+    cpu.replace_status(ProcessorStatus::try_new(0xd3).expect("Supervisor mode"));
+    run(&mut cpu, &mut bus, 2);
+    assert_eq!(cpu.registers[1], 0, "MSR SPSR followed by MRS SPSR");
+    assert_eq!(
+        cpu.status.bits(),
+        0xd3,
+        "SPSR storage is not a CPSR mode change"
+    );
+}
+
+#[test]
 fn reset_and_architectural_pc() {
     let cpu = Cpu::default();
     assert_eq!(cpu.instruction_address(), 0);

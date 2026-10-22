@@ -1,4 +1,4 @@
-use crate::{Bus, Cpu, EmulatorError, StepTrace};
+use crate::{Bus, Cpu, EmulatorError, StepKind, StepTrace};
 
 /// Owns CPU and hardware state; file I/O remains the frontend's responsibility.
 #[derive(Clone, Debug)]
@@ -40,7 +40,34 @@ impl Machine {
         self.bus.clocks()
     }
 
-    /// Executes one instruction. Errors latch until a new machine is created.
+    /// Most recently rendered 240×160 pixels as 0x00RRGGBB values.
+    #[must_use]
+    pub fn screen(&self) -> &[u32] {
+        &self.bus.ppu.pixels
+    }
+
+    /// Completed hardware display frames.
+    #[must_use]
+    pub fn frames(&self) -> u64 {
+        self.bus.hardware.frames
+    }
+
+    /// Sets held buttons: bits 0..9 are A, B, Select, Start, Right, Left, Up,
+    /// Down, R, L. A one means pressed; hardware KEYINPUT is active-low.
+    pub fn set_keys(&mut self, pressed: u16) {
+        self.bus.hardware.set_keys(pressed & 0x3ff);
+    }
+
+    /// Advances through one hardware frame, including CPU, DMA and halt time.
+    pub fn run_frame(&mut self) -> Result<(), EmulatorError> {
+        let frame = self.frames();
+        while self.frames() == frame {
+            self.step()?;
+        }
+        Ok(())
+    }
+
+    /// Executes one CPU activity. Errors latch until a new machine is created.
     ///
     /// A device error may occur after partial effects, so resuming after failure
     /// would be incorrect. Repeated calls return the same fault without mutation.
@@ -48,13 +75,42 @@ impl Machine {
         if let Some(error) = self.fault {
             return Err(error);
         }
-        match self.cpu.step(&mut self.bus) {
+        match self.step_inner() {
             Ok(trace) => Ok(trace),
             Err(error) => {
                 self.fault = Some(error);
                 Err(error)
             }
         }
+    }
+    fn step_inner(&mut self) -> Result<StepTrace, EmulatorError> {
+        self.bus.service_dma()?;
+        let clock_before = self.clocks();
+        if self.bus.hardware.halted && self.bus.hardware.wake_pending() {
+            self.bus.hardware.halted = false;
+        }
+        let kind = if self.bus.hardware.irq_pending() && self.cpu.take_irq(&mut self.bus)? {
+            Some(StepKind::Irq)
+        } else if self.bus.hardware.halted {
+            self.bus.advance(self.bus.hardware.next_event());
+            Some(StepKind::Halt)
+        } else {
+            None
+        };
+        if let Some(kind) = kind {
+            return Ok(StepTrace {
+                kind,
+                address: self.cpu.instruction_address(),
+                opcode: 0,
+                thumb: self.cpu.status().thumb(),
+                condition_passed: false,
+                clock_before,
+                clock_after: self.clocks(),
+                registers: self.cpu.registers(),
+                status: self.cpu.status().bits(),
+            });
+        }
+        self.cpu.step(&mut self.bus)
     }
 }
 
@@ -63,16 +119,35 @@ mod tests {
     use super::Machine;
 
     #[test]
+    fn frame_clock_runs_during_halt_and_irq_vectors() {
+        let mut bios = [0; 0x4000];
+        bios[..4].copy_from_slice(&0xe321_f01fu32.to_le_bytes());
+        let mut machine = Machine::try_new(&bios, &[0; 192]).expect("synthetic machine");
+        machine.step().expect("MSR enters System with IRQ enabled");
+        machine.bus.hardware.set_half(0x200, 1);
+        machine.bus.hardware.set_half(0x202, 1);
+        machine.bus.hardware.set_half(0x208, 1);
+        let trace = machine.step().expect("IRQ entry");
+        assert_eq!(trace.kind, crate::StepKind::Irq);
+        assert_eq!(machine.cpu.instruction_address(), 0x18);
+        machine.bus.hardware.set_half(0x200, 0);
+        machine.bus.hardware.halted = true;
+        machine.run_frame().expect("HALT must not stop peripherals");
+        assert_eq!(machine.frames(), 1);
+        assert_eq!(machine.clocks(), 280896);
+    }
+
+    #[test]
     fn device_fault_is_terminal_and_does_not_advance_on_retry() {
         let mut bios = vec![0; 0x4000];
-        for (index, opcode) in [0xe3a0_0301u32, 0xe590_1000].into_iter().enumerate() {
+        for (index, opcode) in [0xe3a0_0301u32, 0xe590_1400].into_iter().enumerate() {
             bios[index * 4..index * 4 + 4].copy_from_slice(&opcode.to_le_bytes());
         }
         let mut machine = Machine::try_new(&bios, &[0; 192]).expect("valid images");
         machine.step().expect("MOV r0, #0x04000000");
         let error = machine
             .step()
-            .expect_err("display I/O is not yet supported");
+            .expect_err("unmapped I/O remains an explicit fault");
         let clocks = machine.clocks();
         let registers = machine.cpu().registers();
         assert_eq!(machine.step(), Err(error));

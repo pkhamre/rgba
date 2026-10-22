@@ -1,9 +1,22 @@
 use std::fmt;
 
-/// One completed instruction, with post-execution state and elapsed clocks.
+/// CPU activity represented by a trace record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StepKind {
+    /// An ARM or Thumb instruction.
+    Instruction,
+    /// A halted CPU waiting while peripherals advance.
+    Halt,
+    /// IRQ exception entry.
+    Irq,
+}
+
+/// One completed CPU activity, with post-execution state and elapsed clocks.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct StepTrace {
+    /// Instruction, idle peripheral advancement, or IRQ entry.
+    pub kind: StepKind,
     /// Address of the executed instruction, not the pipelined R15 value.
     pub address: u32,
     /// Raw ARM opcode, or zero-extended Thumb opcode.
@@ -32,10 +45,15 @@ impl fmt::Display for StepTrace {
             self.address,
             if self.thumb { 'T' } else { 'A' },
             self.opcode,
-            if self.condition_passed {
-                "exec"
-            } else {
-                "skip"
+            match self.kind {
+                StepKind::Halt => "halt",
+                StepKind::Irq => "irq",
+                StepKind::Instruction =>
+                    if self.condition_passed {
+                        "exec"
+                    } else {
+                        "skip"
+                    },
             },
             self.status
         )?;

@@ -40,6 +40,31 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         rom.len(),
         bios.len()
     );
+    if let Some(frames) = args.frames {
+        let mut event = 0;
+        for frame in 0..frames {
+            if event < args.input.len() && args.input[event].0 == frame {
+                machine.set_keys(args.input[event].1);
+                event += 1;
+            }
+            machine.run_frame().map_err(|error| {
+                io::Error::other(format!(
+                    "frame {frame}, PC {:08x}: {error}",
+                    machine.cpu().instruction_address()
+                ))
+            })?;
+        }
+        if let Some(path) = &args.screenshot {
+            screenshot(path, machine.screen())?;
+        }
+        eprintln!(
+            "frames={} clocks={} PC={:08x}",
+            machine.frames(),
+            machine.clocks(),
+            machine.cpu().instruction_address()
+        );
+        return Ok(());
+    }
     let mut completed = 0;
     let mut fault = None;
     while completed < args.steps {
@@ -62,6 +87,9 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     if let Some(writer) = &mut trace {
         writer.flush()?;
     }
+    if let Some(path) = &args.screenshot {
+        screenshot(path, machine.screen())?;
+    }
     let cpu = machine.cpu();
     eprintln!(
         "completed={completed} clocks={} next={:08x} cpsr={:08x}",
@@ -81,4 +109,14 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         .into());
     }
     Ok(())
+}
+
+fn screenshot(path: &std::path::Path, pixels: &[u32]) -> Result<(), io::Error> {
+    use std::io::Write;
+    let mut file = BufWriter::new(OpenOptions::new().write(true).create_new(true).open(path)?);
+    file.write_all(b"P6\n240 160\n255\n")?;
+    for pixel in pixels {
+        file.write_all(&[(pixel >> 16) as u8, (pixel >> 8) as u8, *pixel as u8])?;
+    }
+    file.flush()
 }

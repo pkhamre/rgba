@@ -8,8 +8,10 @@ mod bus;
 mod cpu;
 mod cpu_bus;
 mod emulator_error;
+mod hardware;
 mod machine;
 mod multiply;
+mod ppu;
 mod processor_status;
 mod step_trace;
 
@@ -19,4 +21,4 @@ pub use cpu_bus::CpuBus;
 pub use emulator_error::EmulatorError;
 pub use machine::Machine;
 pub use processor_status::{ProcessorMode, ProcessorStatus};
-pub use step_trace::StepTrace;
+pub use step_trace::{StepKind, StepTrace};
