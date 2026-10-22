@@ -6,7 +6,7 @@ Pinned Rust workspace, Google Rust style, safe-Rust/public-doc lints, synthetic
 CI checks, licensed reference preparation, and small logical commits are in
 place. Local debug/release checks pass; GitHub Actions was not run here.
 
-Standard result: **130 Rust unit/integration tests, one doctest, 22 Python
+Standard result: **135 Rust unit/integration tests, one doctest, 22 Python
 tests pass**. Both external tests remain optional/ignored by default.
 The isolated mGBA baseline passes 235/235 cases. Strict CPU comparison still
 fails unchanged: **2,124,072 matches / 125,928 failures** out of 2,250,000,

@@ -2,6 +2,7 @@
 
 mod arguments;
 mod desktop;
+mod frame_pacing;
 mod overlay;
 
 use std::env;

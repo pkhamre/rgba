@@ -128,6 +128,24 @@ correctly reported eight gaps around 75.7 ms. Thus those queue counts alone do
 not demonstrate elimination of audible skips. Device XRUNs/speakers were not
 measured in that fixture.
 
+### Bounded wall-clock catch-up
+
+The writer accounts for accepted PCM still in its queue, prefill reserve, or
+in-flight write. When less than 4,096 frames remain, desktop pacing can reduce
+sleep to restore some reserve. The deadline offset increases by at most 2 ms
+per frame, decreases by 0.25 ms when enough data is pending, and is capped at
+80 ms. Offset slewing avoids switching between large bursts and long sleeps.
+Muted/unavailable audio uses ordinary wall-clock pacing.
+
+This changes host waiting only: no guest frame/instruction is skipped, guest
+clock counts and PCM sample rate are unchanged, and no samples are repeated or
+resampled. Even an unpaced null sink cannot cause unlimited fast-forward.
+The count excludes OS/player/device buffers and is not a device-clock or XRUN
+measurement. Catch-up cannot fix a core that consistently runs below real time.
+
+Tests cover the offset cap/slew, null-sink bound, accepted-frame accounting,
+partial-reserve discard, and stale packets across pause/fast-forward epochs.
+
 ### Reproduce without BIOS or ROM
 
 A quiet 256 Hz tone (right channel at half volume, mono-safe):

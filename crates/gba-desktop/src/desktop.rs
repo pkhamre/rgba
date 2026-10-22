@@ -1,5 +1,6 @@
 use crate::arguments;
 use crate::arguments::Arguments;
+use crate::frame_pacing::FramePacing;
 use crate::overlay;
 use gba_host::Session;
 use gba_host::audio_output::AudioOutput;
@@ -184,6 +185,7 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
     let mut frame_count = 0u64;
     let frame_time = Duration::from_secs_f64(280896.0 / 16777216.0);
     let mut next_frame = Instant::now();
+    let mut pacing = FramePacing::default();
     let mut last_write = Instant::now();
     let mut revision = session.machine().save_revision();
     while running {
@@ -320,9 +322,17 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
         } else {
             next_frame += frame_time;
             let now = Instant::now();
-            if next_frame > now {
-                std::thread::sleep(next_frame - now);
-            } else if now.duration_since(next_frame) > Duration::from_millis(250) {
+            let hint = if paused {
+                None
+            } else {
+                audio.as_ref().and_then(AudioOutput::needs_samples)
+            };
+            let wait = pacing.wait(next_frame.saturating_duration_since(now), hint);
+            if !wait.is_zero() {
+                std::thread::sleep(wait);
+            } else if now > next_frame
+                && now.duration_since(next_frame) > Duration::from_millis(250)
+            {
                 next_frame = now;
             }
         }

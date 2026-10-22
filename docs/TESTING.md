@@ -10,7 +10,7 @@ sh scripts/check.sh
 sh scripts/cargo.sh test --workspace --release
 ```
 
-Current standard result: **130 Rust unit/integration tests, one doctest, and 22
+Current standard result: **135 Rust unit/integration tests, one doctest, and 22
 Python tool tests pass**. Two ignored optional tests require reference assets.
 The standard tests use synthetic data only; CI needs no BIOS/game/test ROM.
 

@@ -10,9 +10,11 @@ pub(crate) struct AudioPrefill {
 }
 
 impl AudioPrefill {
-    pub(crate) fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) -> usize {
+        let discarded = self.pending.len();
         self.pending.clear();
         self.ready = false;
+        discarded
     }
 
     pub(crate) fn push(&mut self, samples: Vec<[i16; 2]>) -> Option<Vec<[i16; 2]>> {

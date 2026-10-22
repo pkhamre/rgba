@@ -190,6 +190,17 @@ impl AudioOutput {
         }
     }
 
+    /// Some(true) asks the host pacer for bounded catch-up when little accepted
+    /// PCM remains in the writer. Some(false) means enough is pending; None means
+    /// muted/unavailable output. Does not include device/OS buffers or prove sound.
+    #[must_use]
+    pub fn needs_samples(&self) -> Option<bool> {
+        self.player
+            .as_ref()
+            .filter(|player| !self.muted && !player.failed.load(Ordering::Relaxed))
+            .map(|player| player.pending.load(Ordering::Relaxed) < PREFILL_FRAMES as u64)
+    }
+
     /// Submission-gap measurements; unrelated to device XRUN reporting.
     #[must_use]
     pub fn timing(&self) -> AudioTiming {
@@ -217,6 +228,7 @@ struct Player {
     muted: Arc<AtomicBool>,
     failed: Arc<AtomicBool>,
     epoch: Arc<AtomicU64>,
+    pending: Arc<AtomicU64>,
     dropped: u64,
 }
 
@@ -240,6 +252,8 @@ impl Player {
         let muted = Arc::new(AtomicBool::new(false));
         let failed = Arc::new(AtomicBool::new(false));
         let epoch = Arc::new(AtomicU64::new(0));
+        let pending = Arc::new(AtomicU64::new(0));
+        let thread_pending = Arc::clone(&pending);
         let thread_epoch = Arc::clone(&epoch);
         let thread_muted = Arc::clone(&muted);
         let thread_failed = Arc::clone(&failed);
@@ -256,18 +270,22 @@ impl Player {
             while let Ok(packet) = receiver.recv() {
                 let epoch = thread_epoch.load(Ordering::Relaxed);
                 if epoch != observed_epoch {
-                    prefill.reset();
+                    let discarded = prefill.reset();
+                    thread_pending.fetch_sub(discarded as u64, Ordering::Relaxed);
                     filter = HighPass::default();
                     observed_epoch = epoch;
                 }
                 if packet.epoch != epoch || thread_muted.load(Ordering::Relaxed) {
+                    thread_pending.fetch_sub(packet.samples.len() as u64, Ordering::Relaxed);
                     continue;
                 }
                 let Some(samples) = prefill.push(packet.samples) else {
                     continue;
                 };
                 let bytes = filter.encode(&samples, format);
-                if let Err(error) = pipe.write_all(&bytes) {
+                let result = pipe.write_all(&bytes);
+                thread_pending.fetch_sub(samples.len() as u64, Ordering::Relaxed);
+                if let Err(error) = result {
                     if !thread_failed.swap(true, Ordering::Relaxed) {
                         eprintln!("Audio {name} write failed: {error}");
                     }
@@ -283,6 +301,7 @@ impl Player {
             muted,
             failed,
             epoch,
+            pending,
             dropped: 0,
         })
     }
@@ -316,12 +335,14 @@ impl Player {
             return;
         }
         if let Some(sender) = &self.sender {
+            self.pending.fetch_add(count, Ordering::Relaxed);
             match sender.try_send(Packet {
                 epoch: self.epoch.load(Ordering::Relaxed),
                 samples,
             }) {
                 Ok(()) => {}
                 Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
+                    self.pending.fetch_sub(count, Ordering::Relaxed);
                     self.dropped += count
                 }
             }
@@ -549,8 +570,18 @@ mod tests {
         let mut command = Command::new("sh");
         command.args(["-c", "exec cat > \"$1\"", "_"]).arg(&path);
         let mut output = single(command).expect("capture player");
+        assert_eq!(output.needs_samples(), Some(true));
         output.submit(vec![[10, -10]; 2048]);
         std::thread::sleep(Duration::from_millis(30));
+        assert_eq!(
+            output
+                .player
+                .as_ref()
+                .expect("player")
+                .pending
+                .load(Ordering::Relaxed),
+            2048
+        );
         assert_eq!(
             fs::metadata(&path).expect("capture").len(),
             0,
@@ -573,9 +604,16 @@ mod tests {
             .epoch
             .load(Ordering::Relaxed);
         output.set_muted(true);
+        assert_eq!(output.needs_samples(), None);
         output.set_muted(false);
         // Inject delayed pre-pause data after resume, deterministically modelling
         // the race where it was already queued when the user changed mode.
+        output
+            .player
+            .as_ref()
+            .expect("player")
+            .pending
+            .fetch_add(2048, Ordering::Relaxed);
         output
             .player
             .as_ref()
@@ -594,6 +632,46 @@ mod tests {
         output.submit(vec![[20, -20]; 2048]);
         output.submit(vec![[20, -20]; 1536]);
         wait_bytes(8192 * 4);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while output
+            .player
+            .as_ref()
+            .expect("player")
+            .pending
+            .load(Ordering::Relaxed)
+            != 0
+        {
+            assert!(
+                Instant::now() < deadline,
+                "pending frame accounting did not drain"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn pending_hint_accounts_for_partial_reserve_discard_on_mode_change() {
+        let mut output =
+            AudioOutput::from_candidates(vec![shell("capture", "exec cat >/dev/null")].into())
+                .expect("player");
+        output.submit(vec![[1, -1]; 512]);
+        output.set_muted(true);
+        assert_eq!(output.needs_samples(), None);
+        output.set_muted(false);
+        output.submit(vec![[2, -2]; 256]);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while output
+            .player
+            .as_ref()
+            .expect("player")
+            .pending
+            .load(Ordering::Relaxed)
+            != 256
+        {
+            assert!(Instant::now() < deadline, "old reserve was not discarded");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(output.needs_samples(), Some(true));
     }
 
     #[test]
@@ -606,6 +684,7 @@ mod tests {
             output.submit(vec![[0, 0]; 1024]);
         }
         assert!(output.dropped() > 0);
+        assert_eq!(output.needs_samples(), Some(false));
         drop(output);
         assert!(start.elapsed() < std::time::Duration::from_secs(3));
     }
