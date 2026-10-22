@@ -1,4 +1,4 @@
-use gba_core::Machine;
+use gba_core::{MAX_SAVE_STATE_SIZE, Machine};
 use std::error::Error;
 use std::fs;
 use std::fs::OpenOptions;
@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 pub struct Session {
     machine: Machine,
     save_path: PathBuf,
+    state_path: PathBuf,
     title: String,
 }
 
@@ -34,20 +35,40 @@ impl Session {
         let save_path = save_path
             .map(Path::to_owned)
             .unwrap_or_else(|| rom_path.with_extension("sav"));
+        let state_path = rom_path.with_extension("state");
         let bios_canonical = bios_path.canonicalize()?;
         let rom_canonical = rom_path.canonicalize()?;
-        for candidate in [
+        let save_candidates = [
             save_path.clone(),
             sidecar(&save_path, ".bak"),
             sidecar(&save_path, ".tmp"),
             sidecar(&save_path, ".bak.tmp"),
-        ] {
+        ];
+        let state_candidates = [
+            state_path.clone(),
+            sidecar(&state_path, ".tmp"),
+            sidecar(&state_path, ".bak"),
+            sidecar(&state_path, ".bak.tmp"),
+        ];
+        for candidate in save_candidates.iter().chain(state_candidates.iter()) {
             if let Ok(canonical) = candidate.canonicalize()
                 && (canonical == bios_canonical || canonical == rom_canonical)
             {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    "save and sidecar paths must not overwrite BIOS or ROM",
+                    "save, state, and sidecar paths must not overwrite BIOS or ROM",
+                )
+                .into());
+            }
+        }
+        for state_candidate in &state_candidates {
+            let aliases_save = save_candidates
+                .iter()
+                .any(|candidate| paths_alias(state_candidate, candidate));
+            if aliases_save {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "save-state path and sidecars must not alias cartridge-save paths",
                 )
                 .into());
             }
@@ -69,6 +90,7 @@ impl Session {
         Ok(Self {
             machine,
             save_path,
+            state_path,
             title,
         })
     }
@@ -97,6 +119,50 @@ impl Session {
         &self.save_path
     }
 
+    /// Location of the single emulator save-state slot.
+    #[must_use]
+    pub fn state_path(&self) -> &Path {
+        &self.state_path
+    }
+
+    /// Atomically writes the current complete machine state to the quick slot.
+    pub fn save_state(&self) -> Result<(), Box<dyn Error>> {
+        let bytes = self.machine.save_state()?;
+        atomic_write(&self.state_path, &bytes)?;
+        Ok(())
+    }
+
+    /// Loads and validates the quick slot, synchronizing its cartridge backup
+    /// to the configured `.sav` before replacing the running machine.
+    pub fn load_state(&mut self) -> Result<(), Box<dyn Error>> {
+        let length = fs::metadata(&self.state_path)?.len();
+        if length > MAX_SAVE_STATE_SIZE as u64 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "save state exceeds size limit",
+            )
+            .into());
+        }
+        let bytes = fs::read(&self.state_path)?;
+        let mut candidate = self.machine.clone();
+        candidate.load_state(&bytes)?;
+        let cartridge = candidate.save_data();
+        let previous = match fs::read(&self.save_path) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        if previous.as_deref() != Some(cartridge) {
+            if let Some(previous) = previous {
+                atomic_write(&sidecar(&self.save_path, ".bak"), &previous)?;
+            }
+            atomic_write(&self.save_path, cartridge)?;
+        }
+        candidate.mark_save_clean();
+        self.machine = candidate;
+        Ok(())
+    }
+
     /// Atomically saves changed backup data and preserves the prior file in
     /// .bak. Dirty state is cleared only after all writes succeed.
     pub fn flush_save(&mut self) -> Result<bool, io::Error> {
@@ -111,6 +177,16 @@ impl Session {
         atomic_write(&self.save_path, self.machine.save_data())?;
         self.machine.mark_save_clean();
         Ok(true)
+    }
+}
+
+fn paths_alias(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
     }
 }
 
@@ -147,7 +223,8 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), io::Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::Session;
+    use super::{Session, sidecar};
+    use gba_core::MAX_SAVE_STATE_SIZE;
     use std::env;
     use std::fs;
     use std::path::PathBuf;
@@ -226,6 +303,78 @@ mod tests {
         assert_eq!(
             fs::read(assets.directory.join("game.sav.bak")).expect("backup"),
             bytes
+        );
+    }
+
+    #[test]
+    fn quick_state_round_trip_syncs_cartridge_save_and_preserves_backup() {
+        let assets = Assets::new();
+        let mut session = assets.session();
+        for _ in 0..3 {
+            session.machine_mut().step().expect("SRAM write");
+        }
+        assert_eq!(session.machine().save_data()[0], 42);
+        let saved_clocks = session.machine().clocks();
+        let expected_save = session.machine().save_data().to_vec();
+        session.save_state().expect("atomic state write");
+        assert!(session.state_path().exists());
+        assert!(
+            fs::metadata(session.state_path())
+                .expect("state file")
+                .len()
+                < MAX_SAVE_STATE_SIZE as u64
+        );
+
+        let previous_save = vec![0x55; expected_save.len()];
+        fs::write(session.save_path(), &previous_save).expect("newer cartridge save");
+        session.machine_mut().step().expect("advance after state");
+        assert_ne!(session.machine().clocks(), saved_clocks);
+        session.load_state().expect("load quick state");
+        assert_eq!(session.machine().clocks(), saved_clocks);
+        assert_eq!(session.machine().save_data(), expected_save);
+        assert!(!session.machine().save_dirty());
+        assert_eq!(
+            fs::read(session.save_path()).expect("synced save"),
+            expected_save
+        );
+        assert_eq!(
+            fs::read(sidecar(session.save_path(), ".bak")).expect("backup"),
+            previous_save
+        );
+    }
+
+    #[test]
+    fn invalid_quick_state_leaves_machine_and_cartridge_file_unchanged() {
+        let assets = Assets::new();
+        let mut session = assets.session();
+        session.save_state().expect("state file");
+        session.machine_mut().step().expect("advance");
+        let clocks = session.machine().clocks();
+        let save_before = fs::read(session.save_path()).expect_err("no save yet");
+        let mut corrupt = fs::read(session.state_path()).expect("state");
+        *corrupt.last_mut().expect("payload") ^= 1;
+        fs::write(session.state_path(), corrupt).expect("corrupt fixture");
+        assert!(session.load_state().is_err());
+        assert_eq!(session.machine().clocks(), clocks);
+        assert_eq!(
+            fs::read(session.save_path())
+                .expect_err("save still absent")
+                .kind(),
+            save_before.kind()
+        );
+    }
+
+    #[test]
+    fn state_slot_cannot_alias_configured_cartridge_save() {
+        let assets = Assets::new();
+        let rom = assets.directory.join("game.gba");
+        assert!(
+            Session::try_new(
+                &assets.directory.join("bios.bin"),
+                &rom,
+                Some(&assets.directory.join("game.state")),
+            )
+            .is_err()
         );
     }
 

@@ -41,9 +41,10 @@ proof.
   state, RTC and cartridge contents; it excludes immutable BIOS/ROM bytes and
   binds the versioned, checksummed file to a SHA-256 ROM identity. Files are
   capped at 4 MiB and decoded sequences are bounded. Corrupt, incompatible, and
-  wrong-ROM inputs are rejected without changing the machine.
-  Desktop atomic state-file management and cartridge-save synchronization are
-  still pending.
+  wrong-ROM inputs are rejected without changing the machine. The host session
+  provides an adjacent `.state` quick slot, atomic writes, bounded reads, and
+  restore-time atomic cartridge-save synchronization with `.sav.bak` retention.
+  Desktop menu, keybind customization, and speed controls are still pending.
 
 ## Renderer optimization regressions
 
