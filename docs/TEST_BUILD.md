@@ -86,6 +86,7 @@ xvfb-run -a sh scripts/play.sh --scale 1 --frames 120
 
 Repeat the headless game smoke with `sh scripts/smoke-emerald.sh`. This needs
 the local proprietary assets, is not part of CI, and creates a fresh PPM file.
+It uses a new disposable save path rather than loading your normal ROM-side save.
 Inspect that image: successful execution alone is not a visual assertion.
 
 ## Known limits and outstanding acceptance work
