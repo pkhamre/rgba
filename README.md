@@ -21,7 +21,8 @@ a local, untracked `bins/gba_bios.bin` when the XDG default is absent. With no
 `--rom` argument, the desktop scans `$XDG_DATA_HOME/rgba/games` (default
 `~/.local/share/rgba/games`), starts its only game automatically, or shows a
 game chooser when there are multiple games. Put `.gba`, `.agb`, or `.bin` ROMs
-directly in that folder. To launch a ROM directly instead:
+directly in that folder. The chooser shows each ROM's filename without the
+extension and wraps longer names. To launch a ROM directly instead:
 `sh scripts/play.sh path/to/game.gba --scale 2`.
 
 Controls: arrows/WASD = D-pad; Z/X = A/B; Enter = Start; Backspace = Select;

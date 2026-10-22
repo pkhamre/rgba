@@ -43,8 +43,9 @@ Reset Defaults. Focus loss releases held keys.
 
 Without `--rom`, ROMs are scanned directly inside `$XDG_DATA_HOME/rgba/games`
 (default `~/.local/share/rgba/games`); supported extensions are `.gba`, `.agb`,
-and `.bin`. One game starts automatically; multiple games show a chooser. Copy
-ROMs into the folder and restart to rescan. Saves/backups and states are stored
+and `.bin`. One game starts automatically; multiple games show a chooser using
+filename stems, with long names wrapped across lines. Copy ROMs into the folder
+and restart to rescan. Saves/backups and states are stored
 under `$XDG_DATA_HOME/rgba/saves` and `states`, named by ROM SHA-256. Settings
 are under `$XDG_CONFIG_HOME/rgba/settings`. Missing ROM-side `.sav`, `.sav.bak`,
 `.state`, and `.settings` files are copied on first launch and left in place;

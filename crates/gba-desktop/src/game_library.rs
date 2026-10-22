@@ -113,18 +113,11 @@ pub(crate) fn game_from_path(path: &Path) -> io::Result<Game> {
         ));
     }
     let identity: [u8; 32] = Sha256::digest(&bytes).into();
-    let header_title = String::from_utf8_lossy(&bytes[0xa0..0xac])
-        .trim_matches(char::from(0))
-        .trim()
-        .to_owned();
-    let title = if header_title.is_empty() {
-        path.file_stem()
-            .unwrap_or_else(|| OsStr::new("UNKNOWN GAME"))
-            .to_string_lossy()
-            .into_owned()
-    } else {
-        header_title
-    };
+    let title = path
+        .file_stem()
+        .unwrap_or_else(|| OsStr::new("UNKNOWN GAME"))
+        .to_string_lossy()
+        .into_owned();
     Ok(Game {
         path: path.to_owned(),
         identity,
@@ -281,7 +274,7 @@ mod tests {
         let first = rom(b"ZELDA", 1);
         fs::write(fixture.paths.games.join("z.gba"), &first).expect("ROM");
         fs::write(fixture.paths.games.join("copy.GBA"), &first).expect("duplicate");
-        fs::write(fixture.paths.games.join("a.agb"), rom(b"ALPHA", 2)).expect("ROM");
+        fs::write(fixture.paths.games.join("a.agb"), rom(b"HEADER", 2)).expect("ROM");
         fs::create_dir(fixture.paths.games.join("nested")).expect("subfolder");
         fs::write(
             fixture.paths.games.join("nested/ignored.gba"),
@@ -291,7 +284,9 @@ mod tests {
         fs::write(fixture.paths.games.join("notes.txt"), b"not a ROM").expect("notes");
         let games = scan(&fixture.paths).expect("scan");
         assert_eq!(games.len(), 2);
-        assert_eq!(games[0].title, "ALPHA");
+        assert_eq!(games[0].title, "a");
+        assert_eq!(games[1].title, "copy");
+        assert!(games[1].path.ends_with("copy.GBA"));
         assert_eq!(games[1].identity, <[u8; 32]>::from(Sha256::digest(&first)));
     }
 
@@ -324,16 +319,18 @@ mod tests {
     }
 
     #[test]
-    fn scan_uses_filename_if_header_title_is_empty() {
+    fn scan_uses_filename_even_when_rom_has_a_short_header_title() {
         let fixture = Fixture::new();
-        fs::write(fixture.paths.games.join("mystery.gba"), rom(b"", 8)).expect("ROM");
+        let path = fixture.paths.games.join("Pokemon - Emerald Version.gba");
+        let bytes = rom(b"POKEMON EMER", 8);
+        fs::write(&path, &bytes).expect("ROM");
         let games = scan(&fixture.paths).expect("scan");
         assert_eq!(
             games,
             [Game {
-                path: fixture.paths.games.join("mystery.gba"),
-                identity: Sha256::digest(rom(b"", 8)).into(),
-                title: "mystery".to_owned(),
+                path,
+                identity: Sha256::digest(bytes).into(),
+                title: "Pokemon - Emerald Version".to_owned(),
             }]
         );
     }

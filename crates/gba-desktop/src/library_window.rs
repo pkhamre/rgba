@@ -245,22 +245,55 @@ fn library_pixels(games: &[Game], selected: usize) -> Vec<u32> {
         draw_text(&mut pixels, 66, 132, "ESC TO EXIT", 0x90a0b0);
         return pixels;
     }
-    let start = selected.saturating_sub(6);
-    for (row, game) in games.iter().enumerate().skip(start).take(7) {
-        let y = 39 + (row - start) * 13;
+    const VISIBLE_GAMES: usize = 5;
+    let start = selected.saturating_sub(VISIBLE_GAMES - 1);
+    for (row, game) in games.iter().enumerate().skip(start).take(VISIBLE_GAMES) {
+        let y = 34 + (row - start) * 21;
         let color = if row == selected { 0xffd060 } else { 0xffffff };
         draw_text(
             &mut pixels,
-            20,
+            12,
             y,
             if row == selected { ">" } else { " " },
             color,
         );
-        let label = game.title.to_ascii_uppercase();
-        draw_text(&mut pixels, 34, y, &label, color);
+        let (first_line, second_line) = title_lines(&game.title);
+        draw_text(&mut pixels, 25, y, &first_line, color);
+        draw_text(&mut pixels, 25, y + 9, &second_line, color);
     }
-    draw_text(&mut pixels, 26, 137, "UP DOWN MOVE  ENTER LOAD", 0x90a0b0);
+    draw_text(&mut pixels, 26, 145, "UP DOWN MOVE  ENTER LOAD", 0x90a0b0);
     pixels
+}
+
+fn title_lines(title: &str) -> (String, String) {
+    const LINE_CHARACTERS: usize = 32;
+    const MAX_CHARACTERS: usize = LINE_CHARACTERS * 2;
+    let mut characters: Vec<char> = title.to_ascii_uppercase().chars().collect();
+    if characters.len() > MAX_CHARACTERS {
+        characters.truncate(MAX_CHARACTERS - 3);
+        characters.extend(['.', '.', '.']);
+    }
+    if characters.len() <= LINE_CHARACTERS {
+        return (characters.into_iter().collect(), String::new());
+    }
+    let preferred_split = LINE_CHARACTERS * 7 / 8;
+    let split = characters[..preferred_split]
+        .iter()
+        .rposition(|character| *character == ' ')
+        .or_else(|| {
+            characters[..LINE_CHARACTERS]
+                .iter()
+                .rposition(|character| *character == ' ')
+        })
+        .unwrap_or(LINE_CHARACTERS);
+    let next = if characters.get(split) == Some(&' ') {
+        split + 1
+    } else {
+        split
+    };
+    let second = characters.split_off(next);
+    let first = characters[..split].iter().collect();
+    (first, second.into_iter().collect())
 }
 
 fn key_symbol(code: usize, minimum: u8, columns: usize, symbols: &[u32]) -> u32 {
@@ -279,6 +312,21 @@ mod tests {
         let pixels = super::library_pixels(&[], 0);
         assert_eq!(pixels.len(), 240 * 160);
         assert_ne!(pixels, vec![0x101820; 240 * 160]);
+    }
+
+    #[test]
+    fn long_filenames_wrap_and_extreme_names_get_an_ellipsis() {
+        assert_eq!(
+            super::title_lines("Pokemon - Emerald Version (USA, Europe)"),
+            (
+                "POKEMON - EMERALD VERSION".to_owned(),
+                "(USA, EUROPE)".to_owned()
+            )
+        );
+        let (first, second) = super::title_lines(&"A".repeat(80));
+        assert_eq!(first.len(), 32);
+        assert_eq!(second.len(), 32);
+        assert!(second.ends_with("..."));
     }
 
     #[test]
