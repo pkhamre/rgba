@@ -9,6 +9,7 @@ use std::error::Error;
 use std::fs;
 use std::io;
 use std::path::Path;
+use std::process;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::protocol::Event;
@@ -104,6 +105,16 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
             AtomEnum::WM_NAME,
             AtomEnum::STRING,
             title.as_bytes(),
+        )?
+        .check()?;
+    let pid_atom = connection.intern_atom(false, b"_NET_WM_PID")?.reply()?.atom;
+    connection
+        .change_property32(
+            PropMode::REPLACE,
+            window,
+            pid_atom,
+            AtomEnum::CARDINAL,
+            &[process::id()],
         )?
         .check()?;
     let protocols = connection
@@ -344,8 +355,9 @@ fn flush_save(session: &mut Session) {
 fn capture(session: &Session) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all("artifacts")?;
     let name = format!(
-        "artifacts/screenshot-{}.ppm",
-        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        "artifacts/screenshot-{}-{}.ppm",
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos(),
+        process::id()
     );
     screenshot::write_ppm(Path::new(&name), session.machine().screen())?;
     eprintln!("Screenshot: {name}");
