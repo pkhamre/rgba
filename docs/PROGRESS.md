@@ -6,7 +6,7 @@ Pinned Rust workspace, Google Rust style, safe-Rust/public-doc lints, synthetic
 CI checks, licensed reference preparation, and small logical commits are in
 place. Local debug/release checks pass; GitHub Actions was not run here.
 
-Standard result: **138 Rust unit/integration tests, one doctest, 23 Python
+Standard result: **142 Rust unit/integration tests, one doctest, 23 Python
 tests pass**. Both external tests remain optional/ignored by default.
 The isolated mGBA baseline passes 235/235 cases. Strict CPU comparison still
 fails unchanged: **2,124,072 matches / 125,928 failures** out of 2,250,000,
@@ -86,5 +86,8 @@ playthrough, and performance on the user's host is not certified.
 
 Next: hardware-backed CPU/bus/device/audio tests; refine DMA/PPU/PSG edge cases
 and reference captures; listen and check latency/underruns on real devices;
-exercise broader gameplay. Settings, key/controller remapping, and emulator
-save states remain explicitly deferred, separate from cartridge saves.
+exercise broader gameplay. The agreed desktop-options milestone is now in
+progress. Core save states have a versioned/checksummed format, SHA-256 ROM
+binding, full mutable-machine snapshots, and deterministic round-trip/corruption
+tests. Desktop persistence, state-load cartridge-save synchronization, menu,
+configurable bindings/settings, and speed selection are not yet implemented.

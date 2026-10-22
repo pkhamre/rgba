@@ -10,10 +10,14 @@ sh scripts/check.sh
 sh scripts/cargo.sh test --workspace --release
 ```
 
-Current standard result: **138 Rust unit/integration tests, one doctest, and 23
+Current standard result: **142 Rust unit/integration tests, one doctest, and 23
 Python tool tests pass**. Two ignored optional tests require reference assets.
 An additional ignored presentation test requires a dedicated Xvfb display.
 The standard tests use synthetic data only; CI needs no BIOS/game/test ROM.
+
+Core save-state unit tests exercise complete deterministic round trips, ROM
+mismatch, corrupt checksum and payload rejection, and unchanged state on failure.
+These do not yet test desktop persistence or menu controls.
 
 ## Optional strict CPU reference comparison
 

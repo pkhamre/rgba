@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::EmulatorError;
 
 /// ARMv4T execution modes. System mode shares the User register bank.
@@ -34,7 +36,7 @@ impl ProcessorMode {
 }
 
 /// Current or saved processor status, restricted to valid ARMv4T modes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProcessorStatus(u32);
 
 impl Default for ProcessorStatus {

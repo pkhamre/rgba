@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::alu;
 use crate::alu::{ArithmeticResult, ShiftKind, ShiftSource};
 use crate::multiply;
@@ -12,7 +14,7 @@ use crate::{
 /// Baseline N/S/I cycles are charged to the bus. Prefetch-buffer acceleration,
 /// bus arbitration, and exception entry overlap still require hardware validation.
 /// An error is terminal: do not resume a partially executed instruction.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Cpu {
     registers: [u32; 15],
     address: u32,
@@ -44,6 +46,10 @@ impl Default for Cpu {
 }
 
 impl Cpu {
+    pub(crate) fn valid_snapshot(&self) -> bool {
+        ProcessorStatus::try_new(self.status.bits()).is_ok()
+    }
+
     /// Current instruction address. Reset starts at the BIOS vector at zero.
     #[must_use]
     pub fn instruction_address(&self) -> u32 {

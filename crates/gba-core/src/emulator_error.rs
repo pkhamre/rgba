@@ -1,8 +1,9 @@
+use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
 
 /// Invalid assets or hardware behavior not implemented by the current core.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum EmulatorError {
     /// The GBA BIOS must be exactly 16 KiB.

@@ -1,4 +1,6 @@
-use crate::{Bus, Cpu, EmulatorError, StepKind, StepTrace};
+use serde::{Deserialize, Serialize};
+
+use crate::{Bus, Cpu, EmulatorError, StateError, StepKind, StepTrace};
 
 /// Owns CPU and hardware state; file I/O remains the frontend's responsibility.
 #[derive(Clone, Debug)]
@@ -8,7 +10,50 @@ pub struct Machine {
     fault: Option<EmulatorError>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct Snapshot {
+    cpu: Cpu,
+    bus: Bus,
+    #[serde(deserialize_with = "crate::state::deserialize_bounded_vec")]
+    registers: Vec<u8>,
+}
+
 impl Machine {
+    /// Writes a complete, versioned state bound to this machine's ROM image.
+    pub fn save_state(&self) -> Result<Vec<u8>, StateError> {
+        if self.fault.is_some() {
+            return Err(StateError::FaultedMachine);
+        }
+        let (bus, registers) = self.bus.snapshot();
+        let snapshot = Snapshot {
+            cpu: self.cpu.clone(),
+            bus,
+            registers,
+        };
+        let payload = postcard::to_allocvec(&snapshot).map_err(|_| StateError::InvalidData)?;
+        crate::state::encode(self.bus.rom_hash(), &payload)
+    }
+
+    /// Restores a complete state only after validating its container, ROM,
+    /// decoded data, and memory/device invariants. On error this machine is unchanged.
+    pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), StateError> {
+        let payload = crate::state::decode(bytes, &self.bus.rom_hash())?;
+        let (snapshot, remaining) =
+            postcard::take_from_bytes::<Snapshot>(payload).map_err(|_| StateError::InvalidData)?;
+        if !remaining.is_empty() || !snapshot.cpu.valid_snapshot() {
+            return Err(StateError::InvalidData);
+        }
+        let Snapshot {
+            cpu,
+            bus,
+            registers,
+        } = snapshot;
+        self.bus.restore_snapshot(bus, &registers)?;
+        self.cpu = cpu;
+        self.fault = None;
+        Ok(())
+    }
+
     /// Creates a powered-on machine at BIOS address zero.
     ///
     /// ```
@@ -177,6 +222,98 @@ impl Machine {
 #[cfg(test)]
 mod tests {
     use super::Machine;
+
+    #[test]
+    fn save_state_restores_full_machine_and_deterministic_continuation() {
+        let mut bios = vec![0; 0x4000];
+        for opcode in bios.chunks_exact_mut(4) {
+            opcode.copy_from_slice(&0xeaff_fffeu32.to_le_bytes());
+        }
+        let rom = vec![0x42; 192];
+        let mut saved = Machine::try_new(&bios, &rom).expect("machine");
+        saved.run_frame().expect("first frame");
+        saved
+            .bus
+            .write(
+                0x0200_0100,
+                crate::AccessWidth::Word,
+                0x1234_5678,
+                crate::AccessKind::Nonsequential,
+            )
+            .expect("EWRAM write");
+        let state = saved.save_state().expect("state file");
+        let expected_clocks = saved.clocks();
+        let expected_frames = saved.frames();
+        let mut expected = saved.clone();
+
+        let mut restored = Machine::try_new(&bios, &rom).expect("fresh machine");
+        restored.load_state(&state).expect("load state");
+        assert_eq!(restored.clocks(), expected_clocks);
+        assert_eq!(restored.frames(), expected_frames);
+        assert_eq!(
+            restored
+                .bus
+                .read(
+                    0x0200_0100,
+                    crate::AccessWidth::Word,
+                    crate::AccessKind::Nonsequential,
+                )
+                .expect("EWRAM read"),
+            0x1234_5678
+        );
+        // Restore the read's bus-time side effect equally before comparing continuation.
+        saved
+            .bus
+            .read(
+                0x0200_0100,
+                crate::AccessWidth::Word,
+                crate::AccessKind::Nonsequential,
+            )
+            .expect("matching EWRAM read");
+        expected
+            .bus
+            .read(
+                0x0200_0100,
+                crate::AccessWidth::Word,
+                crate::AccessKind::Nonsequential,
+            )
+            .expect("matching EWRAM read");
+        expected.run_frame().expect("matching continuation");
+        restored.run_frame().expect("restored continuation");
+        assert_eq!(restored.clocks(), expected.clocks());
+        assert_eq!(restored.frames(), expected.frames());
+        assert_eq!(restored.cpu.registers(), expected.cpu.registers());
+        assert_eq!(restored.screen(), expected.screen());
+        assert_eq!(restored.take_audio(), expected.take_audio());
+    }
+
+    #[test]
+    fn invalid_state_is_rejected_without_mutating_and_other_rom_is_rejected() {
+        let bios = vec![0; 0x4000];
+        let rom = vec![0x11; 192];
+        let mut source = Machine::try_new(&bios, &rom).expect("machine");
+        let state = source.save_state().expect("state");
+        let mut other = Machine::try_new(&bios, &[0x22; 192]).expect("other ROM");
+        let clocks = other.clocks();
+        assert_eq!(
+            other.load_state(&state),
+            Err(crate::StateError::DifferentRom)
+        );
+        assert_eq!(other.clocks(), clocks);
+        let mut corrupt = state;
+        *corrupt.last_mut().expect("payload") ^= 1;
+        assert_eq!(
+            source.load_state(&corrupt),
+            Err(crate::StateError::InvalidData)
+        );
+        let malformed = crate::state::encode(source.bus.rom_hash(), &[0xff])
+            .expect("valid envelope around invalid payload");
+        assert_eq!(
+            source.load_state(&malformed),
+            Err(crate::StateError::InvalidData)
+        );
+        assert_eq!(source.clocks(), 0);
+    }
 
     #[test]
     fn frame_clock_runs_during_halt_and_irq_vectors() {

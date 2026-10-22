@@ -1,12 +1,46 @@
 //! Clock-driven PSG and Direct Sound. See docs/AUDIO.md for accuracy limits.
 
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
 /// Stereo PCM output rate in frames per second (GBA master clock / 512).
 pub const AUDIO_SAMPLE_RATE: u32 = 32768;
 const QUEUE_LIMIT: usize = AUDIO_SAMPLE_RATE as usize / 2;
 
-#[derive(Clone, Debug, Default)]
+mod bounded_fifo {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::VecDeque;
+
+    pub fn serialize<S>(value: &[VecDeque<i8>; 2], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        value.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[VecDeque<i8>; 2], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct FifoPair(
+            #[serde(deserialize_with = "bounded_deque")] VecDeque<i8>,
+            #[serde(deserialize_with = "bounded_deque")] VecDeque<i8>,
+        );
+
+        fn bounded_deque<'de, D>(deserializer: D) -> Result<VecDeque<i8>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            crate::state::deserialize_bounded_deque(deserializer)
+        }
+
+        let FifoPair(first, second) = FifoPair::deserialize(deserializer)?;
+        Ok([first, second])
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 struct Channel {
     enabled: bool,
     length: u16,
@@ -16,7 +50,7 @@ struct Channel {
     envelope: u8,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Apu {
     channels: [Channel; 4],
     wave: [[u8; 16]; 2],
@@ -27,8 +61,10 @@ pub(crate) struct Apu {
     sequencer_clocks: u64,
     sequencer_step: u8,
     sample_clocks: u64,
+    #[serde(with = "bounded_fifo")]
     fifo: [VecDeque<i8>; 2],
     held: [i8; 2],
+    #[serde(deserialize_with = "crate::state::deserialize_bounded_deque")]
     samples: VecDeque<[i16; 2]>,
     pub(crate) generated: u64,
     pub(crate) dropped: u64,
@@ -60,6 +96,14 @@ fn half(registers: &[u8; 0x400], offset: usize) -> u16 {
 }
 
 impl Apu {
+    pub(crate) fn valid_snapshot(&self) -> bool {
+        self.wave_bank < 2
+            && self.fifo.iter().all(|fifo| fifo.len() <= 32)
+            && self.samples.len() <= QUEUE_LIMIT
+            && self.sample_clocks < 512
+            && self.sequencer_step < 8
+    }
+
     pub(crate) fn next_sample(&self) -> u64 {
         512 - self.sample_clocks
     }

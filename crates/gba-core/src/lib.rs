@@ -15,6 +15,7 @@ mod machine;
 mod multiply;
 mod ppu;
 mod processor_status;
+mod state;
 mod step_trace;
 
 pub use apu::AUDIO_SAMPLE_RATE;
@@ -24,4 +25,5 @@ pub use cpu_bus::CpuBus;
 pub use emulator_error::EmulatorError;
 pub use machine::Machine;
 pub use processor_status::{ProcessorMode, ProcessorStatus};
+pub use state::{MAX_SAVE_STATE_SIZE, StateError};
 pub use step_trace::{StepKind, StepTrace};

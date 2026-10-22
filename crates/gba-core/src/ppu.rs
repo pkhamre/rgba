@@ -1,6 +1,8 @@
 //! Software scanline renderer. Mid-scanline fetch/contention accuracy is pending.
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Pixel {
     color: u16,
     layer: u8,
@@ -8,8 +10,9 @@ struct Pixel {
     semi: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Ppu {
+    #[serde(deserialize_with = "crate::state::deserialize_bounded_vec")]
     pub(crate) pixels: Vec<u32>,
     reference: [[i32; 2]; 2],
 }

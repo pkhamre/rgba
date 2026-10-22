@@ -1,6 +1,12 @@
 //! Display timing, interrupts, timers and DMA register state.
 
-#[derive(Clone, Copy, Debug, Default)]
+use serde::{Deserialize, Serialize};
+
+fn zero_registers() -> [u8; 0x400] {
+    [0; 0x400]
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub(crate) struct Timer {
     counter: u16,
     reload: u16,
@@ -8,7 +14,7 @@ pub(crate) struct Timer {
     phase: u64,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub(crate) struct Dma {
     pub(crate) source: u32,
     pub(crate) destination: u32,
@@ -16,8 +22,9 @@ pub(crate) struct Dma {
     pub(crate) pending: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Hardware {
+    #[serde(skip, default = "zero_registers")]
     pub(crate) registers: [u8; 0x400],
     pub(crate) timers: [Timer; 4],
     pub(crate) dma: [Dma; 4],
@@ -48,6 +55,13 @@ impl Default for Hardware {
 }
 
 impl Hardware {
+    pub(crate) fn valid_snapshot(&self) -> bool {
+        self.line < 228
+            && self.line_clock < 1232
+            && self.timers.iter().all(|timer| timer.phase < 1024)
+            && self.apu.valid_snapshot()
+    }
+
     pub(crate) fn half(&self, offset: usize) -> u16 {
         u16::from_le_bytes([self.registers[offset], self.registers[offset + 1]])
     }

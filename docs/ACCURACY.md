@@ -37,6 +37,13 @@ proof.
 - Host save-size checks, atomic replacement/backups, alias protection, and
   write-failure dirty-state retention; desktop integer-scale presentation and
   headless screenshots share the same core framebuffer.
+- Core save-state snapshot round trips CPU/pipeline, mutable memory and device
+  state, RTC and cartridge contents; it excludes immutable BIOS/ROM bytes and
+  binds the versioned, checksummed file to a SHA-256 ROM identity. Files are
+  capped at 4 MiB and decoded sequences are bounded. Corrupt, incompatible, and
+  wrong-ROM inputs are rejected without changing the machine.
+  Desktop atomic state-file management and cartridge-save synchronization are
+  still pending.
 
 ## Renderer optimization regressions
 

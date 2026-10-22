@@ -1,10 +1,12 @@
+use serde::{Deserialize, Serialize};
+
 use crate::EmulatorError;
 use crate::cartridge::Cartridge;
 use crate::hardware::Hardware;
 use crate::ppu::Ppu;
 
 /// Whether a bus cycle continues a sequential transfer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AccessKind {
     /// First access or a discontinuity in the address stream.
     Nonsequential,
@@ -39,14 +41,21 @@ impl AccessWidth {
 /// WAITCNT timing excludes prefetch and video contention until those devices
 /// are implemented. Open bus currently uses the last physical read latch;
 /// Thumb pipeline-specific open-bus composition is not yet implemented.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Bus {
+    #[serde(skip)]
     bios: Box<[u8]>,
+    #[serde(skip)]
     rom: Box<[u8]>,
+    #[serde(deserialize_with = "crate::state::deserialize_bounded_box")]
     external_ram: Box<[u8]>,
+    #[serde(deserialize_with = "crate::state::deserialize_bounded_box")]
     internal_ram: Box<[u8]>,
+    #[serde(deserialize_with = "crate::state::deserialize_bounded_box")]
     palette: Box<[u8]>,
+    #[serde(deserialize_with = "crate::state::deserialize_bounded_box")]
     video_ram: Box<[u8]>,
+    #[serde(deserialize_with = "crate::state::deserialize_bounded_box")]
     object_ram: Box<[u8]>,
     clocks: u64,
     wait_control: u16,
@@ -437,6 +446,43 @@ impl Bus {
         self.wait_control = self.hardware.half(0x204) & 0x5fff;
         self.hardware.set_half(0x204, self.wait_control);
         Ok(())
+    }
+
+    pub(crate) fn snapshot(&self) -> (Self, Vec<u8>) {
+        let mut snapshot = self.clone();
+        let registers = snapshot.hardware.registers.to_vec();
+        snapshot.hardware.registers = [0; 0x400];
+        (snapshot, registers)
+    }
+
+    pub(crate) fn restore_snapshot(
+        &mut self,
+        mut snapshot: Self,
+        registers: &[u8],
+    ) -> Result<(), crate::StateError> {
+        if registers.len() != 0x400
+            || snapshot.external_ram.len() != 0x40000
+            || snapshot.internal_ram.len() != 0x8000
+            || snapshot.palette.len() != 0x400
+            || snapshot.video_ram.len() != 0x18000
+            || snapshot.object_ram.len() != 0x400
+            || snapshot.ppu.pixels.len() != 240 * 160
+            || snapshot.cartridge.save.len() != self.cartridge.save.len()
+            || !snapshot.cartridge.valid_snapshot()
+            || !snapshot.hardware.valid_snapshot()
+        {
+            return Err(crate::StateError::InvalidData);
+        }
+        snapshot.hardware.registers.copy_from_slice(registers);
+        snapshot.bios.clone_from(&self.bios);
+        snapshot.rom.clone_from(&self.rom);
+        *self = snapshot;
+        Ok(())
+    }
+
+    pub(crate) fn rom_hash(&self) -> [u8; 32] {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(&self.rom).into()
     }
 }
 

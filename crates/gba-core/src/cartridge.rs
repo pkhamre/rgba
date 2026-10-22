@@ -1,6 +1,8 @@
 //! Cartridge backup and GPIO RTC. Flash completion timing is instantaneous for now.
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 enum FlashPhase {
     #[default]
     Ready,
@@ -13,8 +15,9 @@ enum FlashPhase {
     Erase,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Cartridge {
+    #[serde(deserialize_with = "crate::state::deserialize_bounded_vec")]
     pub(crate) save: Vec<u8>,
     pub(crate) dirty: bool,
     pub(crate) revision: u64,
@@ -73,6 +76,14 @@ impl Cartridge {
             seconds: 946684800,
             cycles: 0,
         }
+    }
+
+    pub(crate) fn valid_snapshot(&self) -> bool {
+        self.bank <= 1
+            && self.bank * 0x10000 < self.save.len()
+            && self.bits <= 8
+            && matches!(self.data_bits, 0 | 8 | 24 | 56)
+            && self.data_bits <= 56
     }
 
     pub(crate) fn advance(&mut self, cycles: u64) {
