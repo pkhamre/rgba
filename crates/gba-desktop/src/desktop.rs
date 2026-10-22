@@ -329,6 +329,15 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
     }
     if let Some(output) = &audio {
         eprintln!("Audio host dropped frames: {}", output.dropped());
+        let timing = output.timing();
+        eprintln!(
+            "Audio delivery: player={:?} submitted={} max_submit_gap_ms={:.1} gaps_over_40ms={} producer_hz={:.1} target_hz=32768",
+            output.player_name(),
+            timing.submitted_frames,
+            timing.max_submission_gap.as_secs_f64() * 1000.0,
+            timing.gaps_over_40_ms,
+            timing.submission_rate_hz().unwrap_or(0.0)
+        );
     }
     eprintln!(
         "Completed frames={frame_count} clocks={} PCM={} core_dropped={}",

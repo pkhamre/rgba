@@ -93,12 +93,49 @@ An end-to-end injected late failure after the AU header fell through a missing
 pacat executable to real aplay/null; explicit pipewire correctly stayed silent
 and made the probe fail instead of claiming success.
 
+### Startup reserve and producer timing
+
+A user still heard normal-gameplay skips through pw-cat after the framing fix.
+Inspection found no actual startup reserve: queue capacity was available, but
+the writer sent each frame immediately. The writer now collects 4,096 frames
+(125 ms) of real PCM before delivery. This adds startup/resume latency; it does
+not insert silence, duplicate samples, change guest clocks, or resample.
+
+Mute transitions tag packets with an epoch. Old queued packets are discarded,
+and resume/fast-forward release requires a fresh reserve and filter reset,
+even if the writer received no messages while muted. Storage stays bounded:
+at most 4,095 pending frames plus one accepted packet (maximum 2,048) before
+priming, in addition to the existing bounded input channel.
+
+Synthetic checks cover exact ordering, bounded overshoot, re-priming, old-epoch
+rejection, and a modelled 62.5 ms producer stall. The model misses deadlines
+without a reserve and meets them with it; this is not a hardware measurement.
+
+Exit/probe logs now report `max_submit_gap_ms`, `gaps_over_40ms`, and
+`producer_hz` against the required 32,768. Pause/fast-forward/restart gaps are
+excluded. These measure PCM submission, not DAC deadlines or device XRUNs.
+A producer persistently below the target cannot be fixed by a finite reserve.
+
+This exposed a local default-3x-scale performance problem: a 600-frame
+Xvfb/PipeWire run delivered about 26,121 frames/sec (12.695 s wall time for
+10.046 s emulated time), despite zero queue drops. Pixel-presentation overhead
+is being investigated separately; this reserve alone is not a solution to
+sustained underproduction.
+
+A native virtual-sink probe with injected 60 ms stalls every second completed
+before and after priming with zero host queue drops; the new timing metrics
+correctly reported eight gaps around 75.7 ms. Thus those queue counts alone do
+not demonstrate elimination of audible skips. Device XRUNs/speakers were not
+measured in that fixture.
+
 ### Reproduce without BIOS or ROM
 
 A quiet 256 Hz tone (right channel at half volume, mono-safe):
 ```sh
 sh scripts/cargo.sh run --release -p gba-host --example audio_probe -- auto 3
 sh scripts/cargo.sh run --release -p gba-host --example audio_probe -- pipewire 3
+# Diagnostic: inject a 60 ms producer stall once per second (max 500 ms):
+sh scripts/cargo.sh run --release -p gba-host --example audio_probe -- pipewire 10 60
 ```
 The probe reports the final player, rejects exhausted output, and fails on host
 queue drops. Speakers, sound quality, device XRUNs, and long-session drift still

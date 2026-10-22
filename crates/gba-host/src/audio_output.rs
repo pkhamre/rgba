@@ -1,12 +1,14 @@
 //! Bounded Linux audio transport through installed PipeWire/PulseAudio/ALSA tools.
 //! No host callbacks or device timing can advance the emulated clock.
 
+use crate::audio_prefill::{AudioPrefill, PREFILL_FRAMES};
+use crate::audio_timing::{AudioTiming, SubmissionTiming};
 use crate::stream_format::StreamFormat;
 use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::thread;
 use std::thread::JoinHandle;
@@ -24,6 +26,7 @@ pub struct AudioOutput {
     remaining: VecDeque<Candidate>,
     muted: bool,
     dropped: u64,
+    timing: SubmissionTiming,
 }
 
 impl AudioOutput {
@@ -95,6 +98,7 @@ impl AudioOutput {
             remaining,
             muted: false,
             dropped: 0,
+            timing: SubmissionTiming::default(),
         };
         output.start_next()?;
         Ok(output)
@@ -117,6 +121,11 @@ impl AudioOutput {
                     eprintln!(
                         "Audio: {name} started, 32768 Hz stereo (80 ms requested latency; not playback confirmation)"
                     );
+                    eprintln!(
+                        "Audio prefill: {} frames (125 ms of real PCM)",
+                        PREFILL_FRAMES
+                    );
+                    self.timing.reset_gap();
                     self.player = Some(player);
                     return Ok(());
                 }
@@ -158,6 +167,9 @@ impl AudioOutput {
 
     /// Mutes new packets during pause/fast-forward. Device buffers still drain.
     pub fn set_muted(&mut self, muted: bool) {
+        if self.muted != muted {
+            self.timing.reset_gap();
+        }
         self.muted = muted;
         if let Some(player) = &self.player {
             player.set_muted(muted);
@@ -168,11 +180,20 @@ impl AudioOutput {
     /// At most eight packets of up to 2,048 frames are queued.
     pub fn submit(&mut self, samples: Vec<[i16; 2]>) {
         self.poll();
+        if self.player.is_some() && !self.muted && !samples.is_empty() && samples.len() <= 2048 {
+            self.timing.record(std::time::Instant::now(), samples.len());
+        }
         if let Some(player) = &mut self.player {
             player.submit(samples);
         } else if !self.muted {
             self.dropped += samples.len() as u64;
         }
+    }
+
+    /// Submission-gap measurements; unrelated to device XRUN reporting.
+    #[must_use]
+    pub fn timing(&self) -> AudioTiming {
+        self.timing.snapshot()
     }
 
     /// Frames rejected by host queues/unavailable output. Not a device-underrun
@@ -183,13 +204,19 @@ impl AudioOutput {
     }
 }
 
+struct Packet {
+    epoch: u64,
+    samples: Vec<[i16; 2]>,
+}
+
 struct Player {
     name: &'static str,
     child: Child,
-    sender: Option<SyncSender<Vec<[i16; 2]>>>,
+    sender: Option<SyncSender<Packet>>,
     worker: Option<JoinHandle<()>>,
     muted: Arc<AtomicBool>,
     failed: Arc<AtomicBool>,
+    epoch: Arc<AtomicU64>,
     dropped: u64,
 }
 
@@ -209,24 +236,36 @@ impl Player {
             .stdin
             .take()
             .ok_or_else(|| io::Error::other("audio player stdin unavailable"))?;
-        let (sender, receiver) = mpsc::sync_channel::<Vec<[i16; 2]>>(8);
+        let (sender, receiver) = mpsc::sync_channel::<Packet>(8);
         let muted = Arc::new(AtomicBool::new(false));
         let failed = Arc::new(AtomicBool::new(false));
+        let epoch = Arc::new(AtomicU64::new(0));
+        let thread_epoch = Arc::clone(&epoch);
         let thread_muted = Arc::clone(&muted);
         let thread_failed = Arc::clone(&failed);
         let worker = thread::spawn(move || {
             let mut filter = HighPass::default();
+            let mut prefill = AudioPrefill::default();
+            let mut observed_epoch = 0;
             if let Err(error) = pipe.write_all(format.header()) {
                 if !thread_failed.swap(true, Ordering::Relaxed) {
                     eprintln!("Audio {name} header failed: {error}");
                 }
                 return;
             }
-            while let Ok(samples) = receiver.recv() {
-                if thread_muted.load(Ordering::Relaxed) {
+            while let Ok(packet) = receiver.recv() {
+                let epoch = thread_epoch.load(Ordering::Relaxed);
+                if epoch != observed_epoch {
+                    prefill.reset();
                     filter = HighPass::default();
+                    observed_epoch = epoch;
+                }
+                if packet.epoch != epoch || thread_muted.load(Ordering::Relaxed) {
                     continue;
                 }
+                let Some(samples) = prefill.push(packet.samples) else {
+                    continue;
+                };
                 let bytes = filter.encode(&samples, format);
                 if let Err(error) = pipe.write_all(&bytes) {
                     if !thread_failed.swap(true, Ordering::Relaxed) {
@@ -243,6 +282,7 @@ impl Player {
             worker: Some(worker),
             muted,
             failed,
+            epoch,
             dropped: 0,
         })
     }
@@ -261,7 +301,9 @@ impl Player {
     }
 
     fn set_muted(&self, muted: bool) {
-        self.muted.store(muted, Ordering::Relaxed);
+        if self.muted.swap(muted, Ordering::Relaxed) != muted {
+            self.epoch.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     fn submit(&mut self, samples: Vec<[i16; 2]>) {
@@ -274,7 +316,10 @@ impl Player {
             return;
         }
         if let Some(sender) = &self.sender {
-            match sender.try_send(samples) {
+            match sender.try_send(Packet {
+                epoch: self.epoch.load(Ordering::Relaxed),
+                samples,
+            }) {
                 Ok(()) => {}
                 Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
                     self.dropped += count
@@ -477,7 +522,9 @@ mod tests {
         )
         .expect("initial player");
         assert_eq!(output.player_name(), Some("closes-stdin"));
-        output.submit(vec![[10, -10]; 512]);
+        for _ in 0..4 {
+            output.submit(vec![[10, -10]; 1024]);
+        }
         wait_for(&mut output, Some("working"));
     }
 
@@ -493,6 +540,60 @@ mod tests {
         }
         assert!(output.remaining.is_empty());
         assert_eq!(output.dropped(), 12);
+    }
+
+    #[test]
+    fn worker_prefills_and_discards_old_epoch_packets_after_resume() {
+        let fixture = Trigger::new();
+        let path = fixture.path.join("pcm");
+        let mut command = Command::new("sh");
+        command.args(["-c", "exec cat > \"$1\"", "_"]).arg(&path);
+        let mut output = single(command).expect("capture player");
+        output.submit(vec![[10, -10]; 2048]);
+        std::thread::sleep(Duration::from_millis(30));
+        assert_eq!(
+            fs::metadata(&path).expect("capture").len(),
+            0,
+            "partial reserve not sent"
+        );
+        output.submit(vec![[10, -10]; 2048]);
+        let wait_bytes = |expected| {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while fs::metadata(&path).expect("capture").len() < expected {
+                assert!(Instant::now() < deadline, "worker did not deliver PCM");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert_eq!(fs::metadata(&path).expect("capture").len(), expected);
+        };
+        wait_bytes(4096 * 4);
+        let old_epoch = output
+            .player
+            .as_ref()
+            .expect("player")
+            .epoch
+            .load(Ordering::Relaxed);
+        output.set_muted(true);
+        output.set_muted(false);
+        // Inject delayed pre-pause data after resume, deterministically modelling
+        // the race where it was already queued when the user changed mode.
+        output
+            .player
+            .as_ref()
+            .expect("player")
+            .sender
+            .as_ref()
+            .expect("sender")
+            .try_send(super::Packet {
+                epoch: old_epoch,
+                samples: vec![[999, 999]; 2048],
+            })
+            .expect("queued old epoch");
+        output.submit(vec![[20, -20]; 512]);
+        std::thread::sleep(Duration::from_millis(30));
+        assert_eq!(fs::metadata(&path).expect("capture").len(), 4096 * 4);
+        output.submit(vec![[20, -20]; 2048]);
+        output.submit(vec![[20, -20]; 1536]);
+        wait_bytes(8192 * 4);
     }
 
     #[test]
