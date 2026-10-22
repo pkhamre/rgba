@@ -132,7 +132,10 @@ accuracy criteria or the first-release checkpoint. Audio synthesis/playback is
 now implemented provisionally; real game-menu save/Continue cycles pass locally,
 and the first battle succeeded in user testing. A controlled real-time desktop
 soak passed; varied human gameplay/listening and hardware/reference validation
-remain open. A desktop options menu, persistent key remapping, speed selection, and emulator save states are now agreed follow-up work; implementation has not started.
+remain open. The agreed desktop-options follow-up is in implementation: core/host
+state persistence, settings storage, keybinding/menu models, and desktop event-loop
+integration are implemented. Standard checks pass; the isolated Xvfb interactive
+acceptance run remains to be completed.
 
 ## Work policy
 

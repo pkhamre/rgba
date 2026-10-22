@@ -188,6 +188,28 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
             }
         }
     };
+    let mut bindings = crate::keybindings::KeyBindings::default();
+    let mut settings_warning = None;
+    match session.read_settings() {
+        Ok(Some(bytes)) => match std::str::from_utf8(&bytes)
+            .map_err(|_| crate::keybindings::BindingError::InvalidFormat)
+            .and_then(crate::keybindings::KeyBindings::decode)
+        {
+            Ok(saved) => bindings = saved,
+            Err(error) => {
+                settings_warning = Some(format!("KEY SETTINGS INVALID: {error:?}"));
+                eprintln!("Ignoring invalid key settings: {error:?}");
+            }
+        },
+        Ok(None) => {}
+        Err(error) => {
+            settings_warning = Some(format!("KEY SETTINGS: {error}"));
+            eprintln!("Ignoring unreadable key settings: {error}");
+        }
+    }
+    let mut menu = crate::menu::MenuState::default();
+    let mut menu_open = false;
+    let mut speed = 1u8;
     let mut held = [false; 256];
     let mut paused = false;
     let mut fast = false;
@@ -226,26 +248,149 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
                     let symbol = key_symbol(code, minimum_keycode, columns, &mapping.keysyms);
                     let first = !held[code];
                     held[code] = true;
-                    match symbol {
-                        0xff1b => running = false,
-                        0x20 if first => {
-                            paused = !paused;
-                            let label = format!("{title}{}", if paused { " - PAUSED" } else { "" });
-                            connection.change_property8(
-                                PropMode::REPLACE,
+                    if !first {
+                        continue;
+                    }
+                    if menu_open {
+                        let command = menu.handle_key(symbol, &mut bindings, speed);
+                        match command {
+                            crate::menu::Command::None => {}
+                            crate::menu::Command::Resume => {
+                                menu_open = false;
+                                held.fill(false);
+                                set_window_title(
+                                    &connection,
+                                    window,
+                                    protocols,
+                                    delete,
+                                    &title,
+                                    false,
+                                    paused,
+                                )?;
+                            }
+                            crate::menu::Command::Exit => {
+                                if flush_save(session) {
+                                    running = false;
+                                } else {
+                                    menu.set_status("SAVE FAILED - EXIT CANCELLED");
+                                }
+                            }
+                            crate::menu::Command::SaveState => match session.save_state() {
+                                Ok(()) => {
+                                    menu.set_status("STATE SAVED");
+                                    eprintln!("Save state: {}", session.state_path().display());
+                                }
+                                Err(error) => {
+                                    menu.set_status("STATE SAVE FAILED");
+                                    eprintln!("Save-state write failed: {error}");
+                                }
+                            },
+                            crate::menu::Command::LoadState => match session.load_state() {
+                                Ok(()) => {
+                                    menu.set_status("STATE LOADED");
+                                    if let Some(output) = &mut audio {
+                                        output.reset_after_state_load();
+                                    }
+                                    eprintln!("Loaded state: {}", session.state_path().display());
+                                    revision = session.machine().save_revision();
+                                }
+                                Err(error) => {
+                                    menu.set_status("STATE LOAD FAILED");
+                                    eprintln!("Save-state load failed: {error}");
+                                }
+                            },
+                            crate::menu::Command::SpeedChanged(selected) => {
+                                speed = selected;
+                                next_frame = Instant::now();
+                                menu.set_status(format!("SPEED {speed}X"));
+                            }
+                            crate::menu::Command::SettingsChanged => {
+                                match session.write_settings(bindings.encode().as_bytes()) {
+                                    Ok(()) => {
+                                        menu.set_status("SETTINGS SAVED");
+                                        settings_warning = None;
+                                    }
+                                    Err(error) => {
+                                        menu.set_status("SETTINGS WRITE FAILED");
+                                        eprintln!("Key settings write failed: {error}");
+                                    }
+                                }
+                            }
+                        }
+                        if !menu_open {
+                            set_window_title(
+                                &connection,
                                 window,
-                                AtomEnum::WM_NAME,
-                                AtomEnum::STRING,
-                                label.as_bytes(),
+                                protocols,
+                                delete,
+                                &title,
+                                false,
+                                paused,
                             )?;
                         }
-                        0xff09 => fast = true,
-                        0xffc2 if first => flush_save(session),
-                        0xffc9 if first => {
+                        continue;
+                    }
+                    match bindings.action_for(symbol) {
+                        Some(crate::keybindings::Action::Menu) => {
+                            menu = crate::menu::MenuState::default();
+                            if let Some(warning) = settings_warning.take() {
+                                menu.set_status(warning);
+                            }
+                            menu_open = true;
+                            fast = false;
+                            set_window_title(
+                                &connection,
+                                window,
+                                protocols,
+                                delete,
+                                &title,
+                                true,
+                                paused,
+                            )?;
+                        }
+                        Some(crate::keybindings::Action::Pause) => {
+                            paused = !paused;
+                            set_window_title(
+                                &connection,
+                                window,
+                                protocols,
+                                delete,
+                                &title,
+                                false,
+                                paused,
+                            )?;
+                        }
+                        Some(crate::keybindings::Action::FastForward) => fast = true,
+                        Some(crate::keybindings::Action::FlushSave) => {
+                            let _ = flush_save(session);
+                        }
+                        Some(crate::keybindings::Action::Screenshot) => {
                             if let Err(error) = capture(session) {
                                 eprintln!("Screenshot failed: {error}");
                             }
                         }
+                        Some(crate::keybindings::Action::SaveState) => match session.save_state() {
+                            Ok(()) => {
+                                menu.set_status("STATE SAVED");
+                                eprintln!("Save state: {}", session.state_path().display());
+                            }
+                            Err(error) => eprintln!("Save-state write failed: {error}"),
+                        },
+                        Some(crate::keybindings::Action::Exit) => {
+                            if flush_save(session) {
+                                running = false;
+                            }
+                        }
+                        Some(crate::keybindings::Action::LoadState) => match session.load_state() {
+                            Ok(()) => {
+                                if let Some(output) = &mut audio {
+                                    output.reset_after_state_load();
+                                }
+                                revision = session.machine().save_revision();
+                                eprintln!("Loaded state: {}", session.state_path().display());
+                            }
+                            Err(error) => eprintln!("Save-state load failed: {error}"),
+                        },
                         _ => {}
                     }
                 }
@@ -256,13 +401,10 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
                     {
                         continue;
                     }
-                    held[usize::from(event.detail)] = false;
-                    if key_symbol(
-                        usize::from(event.detail),
-                        minimum_keycode,
-                        columns,
-                        &mapping.keysyms,
-                    ) == 0xff09
+                    let code = usize::from(event.detail);
+                    held[code] = false;
+                    let symbol = key_symbol(code, minimum_keycode, columns, &mapping.keysyms);
+                    if bindings.action_for(symbol) == Some(crate::keybindings::Action::FastForward)
                     {
                         fast = false;
                     }
@@ -276,14 +418,13 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
         if !running {
             break;
         }
-        let mut buttons = 0;
-        for (code, pressed) in held.iter().enumerate() {
-            if *pressed {
-                buttons |= button(key_symbol(code, minimum_keycode, columns, &mapping.keysyms));
-            }
-        }
+        let buttons = if menu_open {
+            0
+        } else {
+            bindings.button_mask(&held, minimum_keycode, columns, &mapping.keysyms)
+        };
         session.machine_mut().set_keys(buttons);
-        if !paused {
+        if !paused && !menu_open {
             let started = Instant::now();
             session.machine_mut().run_frame()?;
             let elapsed = started.elapsed();
@@ -293,11 +434,17 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
         }
         let samples = session.machine_mut().take_audio();
         if let Some(output) = &mut audio {
-            output.set_muted(paused || fast);
+            output.set_muted(paused || menu_open || fast || speed > 1);
             output.submit(samples);
         }
         let presentation_started = Instant::now();
-        let overlay = paused.then(|| overlay::paused(session.machine().screen()));
+        let overlay = if menu_open {
+            Some(menu.render(session.machine().screen(), &bindings, speed))
+        } else if paused {
+            Some(overlay::paused(session.machine().screen()))
+        } else {
+            None
+        };
         let pixels = overlay
             .as_deref()
             .unwrap_or_else(|| session.machine().screen());
@@ -338,18 +485,19 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
             last_write = Instant::now();
         }
         if session.machine().save_dirty() && last_write.elapsed() >= Duration::from_secs(2) {
-            flush_save(session);
+            let _ = flush_save(session);
             last_write = Instant::now();
         }
         if args.frames.is_some_and(|limit| frame_count >= limit) {
             break;
         }
-        if fast && !paused {
+        if fast && !paused && !menu_open {
             next_frame = Instant::now();
         } else {
-            next_frame += frame_time;
+            let interval = Duration::from_secs_f64(frame_time.as_secs_f64() / f64::from(speed));
+            next_frame += interval;
             let now = Instant::now();
-            let hint = if paused {
+            let hint = if paused || menu_open || speed > 1 {
                 None
             } else {
                 audio.as_ref().and_then(AudioOutput::needs_samples)
@@ -395,13 +543,57 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
     Ok(())
 }
 
-fn flush_save(session: &mut Session) {
+fn set_window_title(
+    connection: &impl Connection,
+    window: u32,
+    protocols: u32,
+    delete: u32,
+    title: &str,
+    menu_open: bool,
+    paused: bool,
+) -> Result<(), Box<dyn Error>> {
+    let suffix = if menu_open {
+        " - OPTIONS"
+    } else if paused {
+        " - PAUSED"
+    } else {
+        ""
+    };
+    let label = format!("{title}{suffix}");
+    connection
+        .change_property8(
+            PropMode::REPLACE,
+            window,
+            AtomEnum::WM_NAME,
+            AtomEnum::STRING,
+            label.as_bytes(),
+        )?
+        .check()?;
+    connection
+        .change_property32(
+            PropMode::REPLACE,
+            window,
+            protocols,
+            AtomEnum::ATOM,
+            &[delete],
+        )?
+        .check()?;
+    Ok(())
+}
+
+fn flush_save(session: &mut Session) -> bool {
     match session.flush_save() {
-        Ok(true) => eprintln!("Saved {}", session.save_path().display()),
-        Ok(false) => {}
-        Err(error) => eprintln!(
-            "Save failed: {error}; progress remains in memory. Fix the path or free space, then press F5 before quitting."
-        ),
+        Ok(true) => {
+            eprintln!("Saved {}", session.save_path().display());
+            true
+        }
+        Ok(false) => true,
+        Err(error) => {
+            eprintln!(
+                "Save failed: {error}; progress remains in memory. Fix the path or free space, then press F5 before quitting."
+            );
+            false
+        }
     }
 }
 
@@ -422,22 +614,6 @@ fn key_symbol(code: usize, minimum: u8, columns: usize, symbols: &[u32]) -> u32 
         .and_then(|index| symbols.get(index * columns))
         .copied()
         .unwrap_or(0)
-}
-
-fn button(symbol: u32) -> u16 {
-    match symbol {
-        0x7a | 0x5a => 1,
-        0x78 | 0x58 => 2,
-        0xff08 => 4,
-        0xff0d => 8,
-        0xff53 | 0x64 => 16,
-        0xff51 | 0x61 => 32,
-        0xff52 | 0x77 => 64,
-        0xff54 | 0x73 => 128,
-        0x65 => 256,
-        0x71 => 512,
-        _ => 0,
-    }
 }
 
 pub(crate) fn pack_pixels(
@@ -502,6 +678,8 @@ pub(crate) fn pack_pixels(
 
 #[cfg(test)]
 mod tests {
+    use crate::keybindings::KeyBindings;
+
     fn reference_pixels(
         pixels: &[u32],
         scale: u16,
@@ -584,7 +762,12 @@ mod tests {
         assert_eq!(&packed[480 * 4..480 * 4 + 4], &[0x40, 0x80, 0xff, 0]);
         let big = super::pack_pixels(&pixels, 1, 3, 720, false, [0xff0000, 0xff00, 0xff]);
         assert_eq!(&big[..3], &[0xff, 0x80, 0x40]);
-        assert_eq!(super::button(0xff0d), 8);
-        assert_eq!(super::button(0x7a), 1);
+        let mut held = [false; 256];
+        held[10] = true;
+        held[11] = true;
+        let mut symbols = vec![0; 248];
+        symbols[2] = 0xff0d;
+        symbols[3] = 0x7a;
+        assert_eq!(KeyBindings::default().button_mask(&held, 8, 1, &symbols), 9);
     }
 }

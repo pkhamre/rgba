@@ -176,6 +176,15 @@ impl AudioOutput {
         }
     }
 
+    /// Drops stale pre-load PCM from the bounded writer queue and starts a fresh
+    /// prefill epoch after a machine state restore. OS/device buffers may still drain.
+    pub fn reset_after_state_load(&mut self) {
+        if let Some(player) = &self.player {
+            player.epoch.fetch_add(1, Ordering::Relaxed);
+        }
+        self.timing.reset_gap();
+    }
+
     /// Sends PCM without waiting for playback; even an empty packet polls health.
     /// At most eight packets of up to 2,048 frames are queued.
     pub fn submit(&mut self, samples: Vec<[i16; 2]>) {
@@ -606,6 +615,22 @@ mod tests {
         output.set_muted(true);
         assert_eq!(output.needs_samples(), None);
         output.set_muted(false);
+        let before_load = output
+            .player
+            .as_ref()
+            .expect("player")
+            .epoch
+            .load(Ordering::Relaxed);
+        output.reset_after_state_load();
+        assert_eq!(
+            output
+                .player
+                .as_ref()
+                .expect("player")
+                .epoch
+                .load(Ordering::Relaxed),
+            before_load + 1
+        );
         // Inject delayed pre-pause data after resume, deterministically modelling
         // the race where it was already queued when the user changed mode.
         output

@@ -6,8 +6,9 @@ Pinned Rust workspace, Google Rust style, safe-Rust/public-doc lints, synthetic
 CI checks, licensed reference preparation, and small logical commits are in
 place. Local debug/release checks pass; GitHub Actions was not run here.
 
-Standard result: **146 Rust unit/integration tests, one doctest, 23 Python
-tests pass**. Both external tests remain optional/ignored by default.
+Standard result: **154 Rust tests pass (including one doctest), 3 are ignored,
+and 23 Python tests pass**. Both external tests remain optional/ignored by
+default.
 The isolated mGBA baseline passes 235/235 cases. Strict CPU comparison still
 fails unchanged: **2,124,072 matches / 125,928 failures** out of 2,250,000,
 27 of 45 groups fully matching. No reference mismatches are waived.
@@ -28,8 +29,12 @@ Implemented:
   system I/O, and scanline software graphics.
 - Genuine BIOS boot and SWI execution, without a boot shortcut.
 - Banked Flash/SRAM, GPIO RTC reads/control, atomic saves/backups/alias guards.
-- X11/XWayland presentation, keyboard controls, integer scaling, pause,
-  fast-forward, screenshots, save flushing, and native wall-clock pacing.
+- X11/XWayland presentation, integer scaling, native wall-clock pacing, and
+  an Escape-accessible options menu with explicit Exit, 1×/2×/4× selection,
+  state actions, and a Keybindings/Reset Defaults page.
+- ROM-specific key remapping for all GBA and emulator actions, duplicate-key
+  rejection, settings persistence, and F6/F7 quick state hotkeys. Defaults keep
+  existing controls; Escape now opens the menu instead of quitting.
 - Visible host-only PAUSED panel and title indicator; guest pixels/state are
   not modified. Paused window stability is tested under Xvfb.
 - Clocked square/sweep/envelope, wave/noise PSG, real timer-fed Direct Sound
@@ -84,13 +89,14 @@ capture, full hardware-test-ROM execution, reference video/audio comparison, or
 speaker listening test here. The controlled soak is not a varied 30-minute human
 playthrough, and performance on the user's host is not certified.
 
-Next: hardware-backed CPU/bus/device/audio tests; refine DMA/PPU/PSG edge cases
-and reference captures; listen and check latency/underruns on real devices;
-exercise broader gameplay. The agreed desktop-options milestone is now in
-progress. Core save states have a versioned/checksummed format, SHA-256 ROM
-binding, full mutable-machine snapshots, and deterministic round-trip/corruption
-tests. Core save states are integrated into `Session` with an adjacent `.state` slot,
-atomic writes, bounded file reads, and transactional `.sav` synchronization with
-`.bak` retention on restore. `Session` also provides a bounded, atomic,
-ROM-specific `.settings` file for upcoming frontend keybindings. Desktop menu
-controls, binding capture, and speed selection are not yet implemented.
+The options/state implementation now has unit coverage for state encoding,
+ROM binding and corruption rejection; atomic Session slots and cartridge-save
+sync; settings round trips and duplicate rejection; menu navigation/capture;
+and host-only overlays. `scripts/validate_desktop.py` now includes disposable-ROM
+interactive checks for menu save/load/resume, persistent keybindings, and
+F6/F7. The explicit Exit action has menu-model unit coverage. That expanded
+Xvfb run has not yet been executed in this environment.
+
+Next: run the interactive acceptance test where Xvfb is available, then continue
+hardware-backed CPU/bus/device/audio tests, reference captures, real-device
+listening/latency checks, and broader gameplay validation.

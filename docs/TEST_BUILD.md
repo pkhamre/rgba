@@ -27,10 +27,21 @@ sh scripts/cargo.sh run --release -p gba-desktop -- \
 ```
 
 Arrows/WASD: D-pad. Z: A. X: B. Enter: Start. Backspace: Select. Q: L. E: R.
-Space: pause. Hold Tab: fast-forward. F5: flush save. F12: screenshot under
-`artifacts/` (binary PPM, never overwrite). Escape/window close: quit and flush.
-Pausing shows a PAUSED overlay and title indicator without modifying guest pixels.
-Focus loss releases held keys. The keyboard map is read at startup.
+Space: pause. Hold Tab: fast-forward. F5: flush cartridge save. F6/F7: save/load
+a machine state. F12: screenshot under `artifacts/` (binary PPM, never overwrite).
+Escape opens the options menu; Escape closes it and B backs out one menu level.
+Exit or window close quits and attempts to flush cartridge data. The menu
+selects 1×/2×/4× speed (the selection lasts until the process exits), opens
+keybinding settings, and provides state actions. `game.settings` and `game.state` sidecars are stored next
+to the ROM; key settings persist across launches. Keybinding capture rejects
+conflicts and includes Reset Defaults. Focus loss releases held keys.
+
+Pause shows a PAUSED overlay and title indicator without modifying guest pixels.
+The menu overlay is also host-only. The state file is versioned and ROM-bound;
+load validates before replacing the running machine, then atomically syncs the
+restored cartridge bytes to `.sav` while retaining `.sav.bak`. State load also
+invalidates queued host PCM before later writes; samples already submitted to
+the player or OS may still drain.
 
 Boot and intro use the normal BIOS/game code; allow time or hold Tab.
 Enter skips the intro/starts the title; Z confirms menu choices/dialogue.
@@ -68,9 +79,9 @@ xvfb-run -a sh scripts/play.sh --scale 1 --frames 120
   activities, 75,998,009 model clocks. No BIOS bypass or high-level SWI shortcut.
 - Supplied Emerald runs 4,000 frames with scripted Start/A presses and renders
   Professor Birch's “Hi! Sorry to keep you waiting!” new-game dialogue.
-- Xvfb desktop smoke: window maps, injected F12 produces a screenshot, paused
-  X11 window pixels match the core framebuffer byte-for-byte, and Escape
-  exits successfully. A separate bounded 40-frame window run also exits cleanly.
+- Xvfb desktop smoke: window maps, injected F12 produces a screenshot, and
+  paused X11 window pixels match the core framebuffer byte-for-byte. Interactive
+  options/state/keybinding checks are covered by `scripts/validate_desktop.py`.
 - A controlled 115,200-frame real-time desktop soak completed in 32 minutes
   19.5 seconds with zero core/host audio queue drops, unchanged save data,
   and stable sampled RSS. This used the earlier audio-buffer limit; the latest
@@ -108,4 +119,6 @@ Remaining: a varied 30-minute human gameplay/listening session, reference-frame/
 audio comparisons, physical peripheral tests, and performance on a named
 end-user host. The automated soak is constrained indoor movement, not broad
 gameplay coverage. Native Wayland without XWayland is unsupported.
-Settings/remapping and emulator save states remain deferred.
+Physical-hardware accuracy, broad gameplay coverage, and real-speaker audio
+remain outstanding. State-file compatibility across emulator releases is not
+promised; incompatible versions are rejected rather than migrated.

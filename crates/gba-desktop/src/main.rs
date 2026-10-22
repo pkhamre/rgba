@@ -4,6 +4,8 @@ mod arguments;
 mod desktop;
 mod frame_cache;
 mod frame_pacing;
+mod keybindings;
+mod menu;
 mod overlay;
 mod presentation;
 

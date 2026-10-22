@@ -19,9 +19,10 @@ This uses your existing `bins/gba_bios.bin` and
 You can select another ROM: `sh scripts/play.sh path/to/game.gba --scale 2`.
 
 Controls: arrows/WASD = D-pad; Z/X = A/B; Enter = Start; Backspace = Select;
-Q/E = L/R. Space pauses with a PAUSED indicator; Tab fast-forwards.
-F5 flushes the cartridge save, F12 captures a PPM screenshot, and Escape/window
-close quits.
+Q/E = L/R. Space pauses; Tab fast-forwards. F5 flushes the cartridge save,
+F6/F7 save/load a machine state, and F12 captures a PPM screenshot. Escape opens
+the options menu; choose Exit or close the window to quit and flush saves.
+The menu also selects 1×/2×/4× speed and configures bindings.
 Hold Tab through boot/intro if desired; use Enter at the title and Z to confirm.
 
 Save data defaults to the ROM's `.sav` file; previous data is kept in
@@ -85,7 +86,7 @@ never overwrite existing files. `--help` needs no assets.
 
 - `crates/gba-core`: deterministic CPU, bus, devices, renderer, and cartridge.
 - `crates/gba-host`: shared asset loading, atomic saves, and screenshots.
-- `crates/gba-desktop`: X11 window, keyboard, integer scaling, and pacing.
+- `crates/gba-desktop`: X11 window, options/keybinding menus, integer scaling, and pacing.
 - `crates/gba-headless`: bounded CLI runner and end-to-end tests.
 - [PLAN.md](PLAN.md): agreed milestones and outstanding release checkpoint.
 - [docs/PROGRESS.md](docs/PROGRESS.md): status and next work.

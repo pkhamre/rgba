@@ -125,6 +125,7 @@ def validate(args):
     if len(original)!=131072:raise ValueError("requires an existing 128 KiB Emerald save")
     output.mkdir(parents=True,exist_ok=False)
     save=output/"isolated.sav";save.write_bytes(original)
+    rom_copy=output/"game.gba";shutil.copyfile(args.rom,rom_copy)
     build=subprocess.check_output(["sh",str(ROOT/"scripts/cargo.sh"),"build","--release","-p","gba-desktop","--message-format=json"],cwd=ROOT,text=True)
     binary=artifact_executable(build)
     env=dict(os.environ)
@@ -133,12 +134,13 @@ def validate(args):
         env["ALSA_CONFIG_PATH"]=str(config)
     log_path=output/"desktop.log"
     report=dict(target_frames=args.frames,backend=args.audio,scale=args.scale,host=platform.platform(),
+                isolated_rom_sha256=hashlib.sha256(rom_copy.read_bytes()).hexdigest(),
                 save_sha256=hashlib.sha256(original).hexdigest(),max_rss_kib=0,
                 binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest())
     start=time.monotonic();process=None;display=None
     try:
         with log_path.open("x") as log:
-            process=subprocess.Popen([str(binary),"--bios",str(args.bios.resolve()),"--rom",str(args.rom.resolve()),
+            process=subprocess.Popen([str(binary),"--bios",str(args.bios.resolve()),"--rom",str(rom_copy.resolve()),
                                       "--save",str(save),"--scale",str(args.scale),"--audio",args.audio,"--frames",str(args.frames)],
                                      env=env,cwd=ROOT,stdout=log,stderr=subprocess.STDOUT)
             display=X11()
@@ -148,10 +150,39 @@ def validate(args):
             if not display.window:raise RuntimeError("child window not found by _NET_WM_PID")
             events=[(34,0xff0d),(41,0xff0d),(48,0xff0d),(56,0x7a)]
             index=0;paused=False;held=None;last_minute=-1;last_flush=-1
+            menu_tested=False;bindings_tested=False;state_hotkeys_tested=False
             while process.poll() is None:
                 elapsed=time.monotonic()-start
                 if elapsed>args.frames*280896/16777216*1.5+90:raise TimeoutError("desktop run exceeded wall-time budget")
                 if index<len(events) and elapsed>=events[index][0]:display.tap(events[index][1]);index+=1
+                if not menu_tested and elapsed>=1:
+                    display.tap(0xff1b);time.sleep(.2)
+                    if b"OPTIONS" not in display.title():raise AssertionError("Escape did not open options")
+                    display.tap(0xff0d);time.sleep(.2)
+                    if not (output/"game.state").is_file():raise AssertionError("Save State menu action failed")
+                    display.tap(0xff54);display.tap(0xff0d);time.sleep(.2)
+                    if b"OPTIONS" not in display.title():raise AssertionError("Load State left options menu")
+                    display.tap(0xff1b);time.sleep(.2)
+                    if b"OPTIONS" in display.title():raise AssertionError("Escape did not resume gameplay")
+                    menu_tested=True;report["options_save_load_resume_tested"]=True
+                if not bindings_tested and elapsed>=3:
+                    display.tap(0xff1b)
+                    for _ in range(3):display.tap(0xff54)
+                    display.tap(0xff0d)
+                    for _ in range(12):display.tap(0xff54)
+                    display.tap(0xff0d);display.tap(0xffc3)
+                    settings=output/"game.settings"
+                    if settings.exists():raise AssertionError("duplicate keybinding was incorrectly saved")
+                    display.tap(0x6d)
+                    if "OPTIONS MENU=0000006d,00000000" not in settings.read_text():raise AssertionError("keybinding was not persisted")
+                    display.tap(0x78);display.tap(0x78);time.sleep(.2)
+                    if b"OPTIONS" in display.title():raise AssertionError("custom menu binding did not resume gameplay")
+                    bindings_tested=True;report["menu_keybinding_persisted"]=True
+                if not state_hotkeys_tested and elapsed>=7:
+                    display.tap(0xffc3);time.sleep(.2)
+                    display.tap(0xffc4);time.sleep(.2)
+                    if not (output/"game.state").is_file():raise AssertionError("state hotkeys failed")
+                    state_hotkeys_tested=True;report["state_hotkeys_tested"]=True
                 if elapsed>=74 and not paused:
                     display.tap(0x20);time.sleep(.3)
                     if b"PAUSED" not in display.title():raise AssertionError("pause title missing")
@@ -196,14 +227,16 @@ def validate(args):
                       emulated_seconds=report["master_clocks"]/16777216,save_unchanged=save.read_bytes()==original,status="passed")
         if report["core_dropped"] or report["host_dropped"] not in (None,0):
             raise AssertionError("audio queue dropped frames")
-        if report["completed_frames"]!=args.frames or not paused or not report["save_unchanged"]:
-            raise AssertionError("frame/pause/save invariant failed")
+        if (report["completed_frames"]!=args.frames or not paused or not report["save_unchanged"]
+                or not menu_tested or not bindings_tested or not state_hotkeys_tested):
+            raise AssertionError("frame/pause/save/options invariant failed")
     except BaseException as error:
         report.update(status="failed",error=repr(error))
         if process and process.poll() is None:process.kill();process.wait()
         raise
     finally:
         if display:display.close()
+        if rom_copy.exists():rom_copy.unlink()
         (output/"report.json").write_text(json.dumps(report,indent=2)+"\n")
     return report
 
