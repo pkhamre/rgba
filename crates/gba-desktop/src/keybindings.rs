@@ -72,7 +72,7 @@ impl Action {
         }
     }
 
-    const fn bit(self) -> Option<u16> {
+    pub(crate) const fn bit(self) -> Option<u16> {
         match self {
             Self::A => Some(1),
             Self::B => Some(2),

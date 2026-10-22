@@ -203,7 +203,10 @@ fn action_for_key(key: KeyCode) -> Option<Action> {
 }
 
 const fn button_bit(action: Action) -> u16 {
-    1 << (action as u16)
+    match action.bit() {
+        Some(bit) => bit,
+        None => 0,
+    }
 }
 
 fn axis_range(axes: &[(AbsoluteAxisCode, evdev::AbsInfo)], axis: AbsoluteAxisCode) -> (i32, i32) {
@@ -260,6 +263,12 @@ mod tests {
         assert_eq!(action_for_key(KeyCode::BTN_START), Some(Action::Start));
         assert_eq!(action_for_key(KeyCode::BTN_TL), Some(Action::L));
         assert_eq!(action_for_key(KeyCode::BTN_TR), Some(Action::R));
+    }
+
+    #[test]
+    fn desktop_actions_do_not_produce_gamepad_button_bits() {
+        assert_eq!(button_bit(Action::Pause), 0);
+        assert_eq!(button_bit(Action::Exit), 0);
     }
 
     #[test]
