@@ -10,5 +10,12 @@ version = "0.1.0"
 name = "gba-headless"
 version = "0.1.0"
 dependencies = [
+ "gba-host",
+]
+
+[[package]]
+name = "gba-host"
+version = "0.1.0"
+dependencies = [
  "gba-core",
 ]

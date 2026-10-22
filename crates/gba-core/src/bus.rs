@@ -1,4 +1,5 @@
 use crate::EmulatorError;
+use crate::cartridge::Cartridge;
 use crate::hardware::Hardware;
 use crate::ppu::Ppu;
 
@@ -55,6 +56,7 @@ pub struct Bus {
     pub(crate) hardware: Hardware,
     pub(crate) ppu: Ppu,
     memory_control: u32,
+    pub(crate) cartridge: Cartridge,
 }
 
 impl Bus {
@@ -69,6 +71,7 @@ impl Bus {
             return Err(EmulatorError::InvalidRomSize(rom.len()));
         }
         Ok(Self {
+            cartridge: Cartridge::new(rom),
             bios: bios.into(),
             rom: rom.into(),
             external_ram: vec![0; 0x40000].into_boxed_slice(),
@@ -114,9 +117,11 @@ impl Bus {
             return self.read_io(address, width);
         }
         if matches!(address >> 24, 0x0e | 0x0f) {
-            return Err(EmulatorError::UnsupportedCartridge {
-                address,
-                write: false,
+            let byte = u32::from(self.cartridge.read_backup(address));
+            return Ok(match width {
+                AccessWidth::Byte => byte,
+                AccessWidth::Halfword => byte * 0x101,
+                AccessWidth::Word => byte * 0x0101_0101,
             });
         }
         let mut value = 0;
@@ -154,10 +159,15 @@ impl Bus {
             return self.write_io(address, width, value);
         }
         if matches!(address >> 24, 0x0e | 0x0f) {
-            return Err(EmulatorError::UnsupportedCartridge {
-                address,
-                write: true,
-            });
+            self.cartridge.write_backup(address, value as u8);
+            return Ok(());
+        }
+        if (8..=13).contains(&(address >> 24)) && width != AccessWidth::Byte {
+            for offset in (0..width.bytes()).step_by(2) {
+                self.cartridge
+                    .write_gpio(address + offset, (value >> (offset * 8)) as u16);
+            }
+            return Ok(());
         }
         if width == AccessWidth::Byte {
             match address >> 24 {
@@ -250,6 +260,9 @@ impl Bus {
             6 => self.video_ram[Self::video_offset(address)],
             7 => self.object_ram[(address & 0x3ff) as usize],
             8..=13 => {
+                if let Some(value) = self.cartridge.read_gpio(address) {
+                    return (value >> ((address & 1) * 8)) as u8;
+                }
                 let offset = (address & 0x01ff_ffff) as usize;
                 self.rom.get(offset).copied().unwrap_or_else(|| {
                     let halfword = (address >> 1) as u16;
@@ -275,6 +288,7 @@ impl Bus {
         while cycles != 0 {
             let step = cycles.min(self.hardware.next_event());
             self.clocks += step;
+            self.cartridge.advance(step);
             self.hardware.advance_timers(step);
             self.hardware.line_clock += step as u16;
             if self.hardware.line_clock == 960 && self.hardware.line < 160 {
@@ -608,14 +622,7 @@ mod tests {
             ),
             Err(EmulatorError::UnsupportedIo { write: false, .. })
         ));
-        assert!(matches!(
-            bus.write(
-                0x0e00_5555,
-                AccessWidth::Byte,
-                0xaa,
-                AccessKind::Nonsequential
-            ),
-            Err(EmulatorError::UnsupportedCartridge { write: true, .. })
-        ));
+        write(&mut bus, 0x0e00_5555, AccessWidth::Byte, 0xaa);
+        assert_eq!(read(&mut bus, 0x0e00_5555, AccessWidth::Byte), 0xaa);
     }
 }

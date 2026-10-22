@@ -46,6 +46,42 @@ impl Machine {
         &self.bus.ppu.pixels
     }
 
+    /// Cartridge backup bytes (Flash or SRAM), not an emulator save state.
+    #[must_use]
+    pub fn save_data(&self) -> &[u8] {
+        &self.bus.cartridge.save
+    }
+
+    /// Whether emulated cartridge writes changed backup data.
+    #[must_use]
+    pub fn save_dirty(&self) -> bool {
+        self.bus.cartridge.dirty
+    }
+
+    /// Called by the frontend only after a successful atomic save.
+    pub fn mark_save_clean(&mut self) {
+        self.bus.cartridge.dirty = false;
+    }
+
+    /// Loads cartridge backup data with strict size validation.
+    pub fn load_save(&mut self, bytes: &[u8]) -> Result<(), EmulatorError> {
+        let expected = self.save_data().len();
+        if bytes.len() != expected {
+            return Err(EmulatorError::InvalidSaveSize {
+                expected,
+                actual: bytes.len(),
+            });
+        }
+        self.bus.cartridge.save.copy_from_slice(bytes);
+        self.mark_save_clean();
+        Ok(())
+    }
+
+    /// Seeds cartridge RTC from a frontend-supplied Unix timestamp (UTC seconds).
+    pub fn set_rtc_timestamp(&mut self, seconds: u64) {
+        self.bus.cartridge.set_timestamp(seconds);
+    }
+
     /// Completed hardware display frames.
     #[must_use]
     pub fn frames(&self) -> u64 {

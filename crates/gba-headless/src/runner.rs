@@ -1,9 +1,8 @@
 use crate::arguments;
 use crate::arguments::Arguments;
-use gba_core::Machine;
+use gba_host::Session;
 use std::env;
 use std::error::Error;
-use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter};
 
@@ -16,16 +15,13 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             format!("{message}\n{}", arguments::USAGE),
         )
     })?;
-    let bios = fs::read(&args.bios).map_err(|error| {
-        io::Error::new(
-            error.kind(),
-            format!("BIOS {}: {error}", args.bios.display()),
-        )
-    })?;
-    let rom = fs::read(&args.rom).map_err(|error| {
-        io::Error::new(error.kind(), format!("ROM {}: {error}", args.rom.display()))
-    })?;
-    let mut machine = Machine::try_new(&bios, &rom)?;
+    let mut session = Session::try_new(&args.bios, &args.rom, None)?;
+    eprintln!(
+        "ROM: {}; save: {}",
+        session.title(),
+        session.save_path().display()
+    );
+    let machine = session.machine_mut();
     // Never truncate input images or existing artifacts by accident.
     let mut trace: Option<BufWriter<File>> = match &args.trace {
         Some(path) => Some(BufWriter::new(
@@ -33,13 +29,6 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         )),
         None => None,
     };
-    let title = String::from_utf8_lossy(&rom[0xa0..0xac]);
-    let game_code = String::from_utf8_lossy(&rom[0xac..0xb0]);
-    eprintln!(
-        "ROM: {title} ({game_code}), {} bytes; BIOS: {} bytes",
-        rom.len(),
-        bios.len()
-    );
     if let Some(frames) = args.frames {
         let mut event = 0;
         for frame in 0..frames {
@@ -63,6 +52,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             machine.clocks(),
             machine.cpu().instruction_address()
         );
+        session.flush_save()?;
         return Ok(());
     }
     let mut completed = 0;
@@ -108,6 +98,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         ))
         .into());
     }
+    session.flush_save()?;
     Ok(())
 }
 

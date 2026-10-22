@@ -1,0 +1,11 @@
+[package]
+name = "gba-host"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gba-core = { path = "../gba-core" }
+
+[lints]
+workspace = true

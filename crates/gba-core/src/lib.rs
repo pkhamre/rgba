@@ -5,6 +5,7 @@
 
 mod alu;
 mod bus;
+mod cartridge;
 mod cpu;
 mod cpu_bus;
 mod emulator_error;

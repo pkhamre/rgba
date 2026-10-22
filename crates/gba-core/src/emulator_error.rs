@@ -32,6 +32,13 @@ pub enum EmulatorError {
         /// True for writes, false for reads.
         write: bool,
     },
+    /// Backup data length does not match the detected cartridge type.
+    InvalidSaveSize {
+        /// Required cartridge backup length.
+        expected: usize,
+        /// Supplied backup length.
+        actual: usize,
+    },
     /// Software selected a reserved processor mode.
     InvalidProcessorMode(u32),
 }
@@ -64,6 +71,9 @@ impl fmt::Display for EmulatorError {
                 "unimplemented cartridge {} at {address:08x}",
                 if *write { "write" } else { "read" }
             ),
+            Self::InvalidSaveSize { expected, actual } => {
+                write!(formatter, "save must be {expected} bytes, got {actual}")
+            }
             Self::InvalidProcessorMode(mode) => {
                 write!(formatter, "reserved processor mode {mode:02x}")
             }
