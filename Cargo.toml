@@ -1,0 +1,19 @@
+[workspace]
+members = ["crates/gba-core", "crates/gba-headless"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.90"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = "warn"
+unwrap_used = "warn"
+
+[profile.release]
+overflow-checks = true
+lto = "thin"

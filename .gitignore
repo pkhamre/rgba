@@ -1,0 +1,10 @@
+/target/
+__pycache__/
+/.tools/
+/bins/*
+/tests/assets/*
+/artifacts/
+*.sav
+*.sav.bak
+*.sav.tmp
+*.rtc
