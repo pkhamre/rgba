@@ -1,6 +1,8 @@
 //! Shared asset loading and durable cartridge-save lifecycle for native runners.
 
+pub mod audio_output;
 pub mod screenshot;
 mod session;
+pub mod wav;
 
 pub use session::Session;

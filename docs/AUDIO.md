@@ -31,3 +31,31 @@ quirks, DAC offsets, powered-off behavior, FIFO underrun behavior, exact
 timer/DMA arbitration, and anti-aliasing still need hardware-backed tests.
 The current mixer treats master-disabled output as silence. Do not describe
 this initial audio implementation as hardware-perfect.
+
+## Linux output
+
+Desktop audio defaults to `--audio auto`. It tries installed `pw-cat`
+(PipeWire), `pacat` (PulseAudio), then `aplay` (ALSA). Select a backend with
+`--audio pipewire|pulse|alsa`, or disable output with `--audio off`.
+No shell is invoked and no native audio SDK is needed to compile the emulator.
+If tools/devices are unavailable, the window continues silently with a terminal
+warning. Device/player failures do not stop guest execution.
+
+A worker applies a deterministic host-side DC-blocking high-pass filter and
+writes stereo signed-16 little-endian PCM. The player resamples to the device
+rate. At most two packets (each capped at 2,048 frames) are queued; a full queue
+drops output instead of blocking or changing emulated time. Drop counts are
+reported on exit. OS/player buffers add latency beyond this queue; 80 ms is
+requested, not guaranteed. Pause and fast-forward mute new packets; previously
+buffered sound drains. Player processes are stopped/reaped on exit.
+
+CLI references checked:
+https://docs.pipewire.org/1.6/page_man_pw-cat_1.html
+https://manpages.debian.org/bookworm/pipewire-bin/pw-cat.1.en.html
+https://manpages.debian.org/bookworm/pulseaudio-utils/pacat.1.en.html
+https://manpages.debian.org/bookworm/alsa-utils/aplay.1.en.html
+
+Host regressions cover PCM WAV headers/endianness/exclusive creation, DC removal,
+missing players, and a stalled consumer not blocking submission or shutdown.
+A 120-frame Xvfb + ALSA-null run produced 65,835 PCM frames with zero core/host
+queue drops. Null-device output tests transport, not speakers or sound quality.

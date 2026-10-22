@@ -2,6 +2,7 @@ use crate::arguments;
 use crate::arguments::Arguments;
 use crate::overlay;
 use gba_host::Session;
+use gba_host::audio_output::AudioOutput;
 use gba_host::screenshot;
 use std::env;
 use std::error::Error;
@@ -95,7 +96,7 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
     connection
         .create_pixmap(depth, pixmap, window, width, height)?
         .check()?;
-    let title = format!("Rust GBA - {} [preview, no audio]", session.title());
+    let title = format!("Rust GBA - {} [preview]", session.title());
     connection
         .change_property8(
             PropMode::REPLACE,
@@ -154,6 +155,17 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
         arguments::USAGE,
         session.save_path().display()
     );
+    let mut audio = if args.audio == "off" {
+        None
+    } else {
+        match AudioOutput::open(&args.audio) {
+            Ok(output) => Some(output),
+            Err(error) => {
+                eprintln!("{error}; continuing without audio");
+                None
+            }
+        }
+    };
     let mut held = [false; 256];
     let mut paused = false;
     let mut fast = false;
@@ -247,6 +259,11 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
             session.machine_mut().run_frame()?;
             frame_count += 1;
         }
+        let samples = session.machine_mut().take_audio();
+        if let Some(output) = &mut audio {
+            output.set_muted(paused || fast);
+            output.submit(samples);
+        }
         let overlay = paused.then(|| overlay::paused(session.machine().screen()));
         let image = pack_pixels(
             overlay
@@ -299,6 +316,15 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
             }
         }
     }
+    if let Some(output) = &audio {
+        eprintln!("Audio host dropped frames: {}", output.dropped());
+    }
+    eprintln!(
+        "Completed frames={frame_count} clocks={} PCM={} core_dropped={}",
+        session.machine().clocks(),
+        session.machine().audio_frames(),
+        session.machine().audio_dropped()
+    );
     connection.free_pixmap(pixmap)?;
     connection.free_gc(gc)?;
     connection.flush()?;

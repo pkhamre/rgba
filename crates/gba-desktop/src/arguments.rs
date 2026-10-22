@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 pub(crate) const USAGE: &str = "\
-gba-desktop --bios PATH --rom PATH [--save PATH] [--scale 1..6] [--frames COUNT]
-Linux X11/XWayland preview build. Audio output is not implemented.
+gba-desktop --bios PATH --rom PATH [--save PATH] [--scale 1..6] [--frames COUNT] [--audio auto|pipewire|pulse|alsa|off]
+Linux X11/XWayland preview. Audio needs pw-cat, pacat, or aplay installed.
 Controls: arrows/WASD = D-pad; Z = A; X = B; Enter = Start; Backspace = Select;
 Q/E = L/R; Space = pause; Tab = fast forward; F5 = flush save; F12 = screenshot;
 Escape or window close = quit and flush save.
@@ -16,6 +16,7 @@ pub(crate) struct Arguments {
     pub(crate) save: Option<PathBuf>,
     pub(crate) scale: u16,
     pub(crate) frames: Option<u64>,
+    pub(crate) audio: String,
 }
 
 impl Arguments {
@@ -25,10 +26,11 @@ impl Arguments {
         let mut save = None;
         let mut scale = None;
         let mut frames = None;
+        let mut audio = None;
         while let Some(option) = arguments.next() {
             if !matches!(
                 option.as_str(),
-                "--bios" | "--rom" | "--save" | "--scale" | "--frames"
+                "--bios" | "--rom" | "--save" | "--scale" | "--frames" | "--audio"
             ) {
                 return Err(format!("unknown option {option}"));
             }
@@ -36,6 +38,15 @@ impl Arguments {
                 .next()
                 .ok_or_else(|| format!("missing value for {option}"))?;
             match option.as_str() {
+                "--audio" if audio.is_none() => {
+                    if !matches!(
+                        value.as_str(),
+                        "auto" | "pipewire" | "pulse" | "alsa" | "off"
+                    ) {
+                        return Err("audio must be auto, pipewire, pulse, alsa, or off".to_owned());
+                    }
+                    audio = Some(value);
+                }
                 "--bios" if bios.is_none() => bios = Some(PathBuf::from(value)),
                 "--rom" if rom.is_none() => rom = Some(PathBuf::from(value)),
                 "--save" if save.is_none() => save = Some(PathBuf::from(value)),
@@ -62,6 +73,7 @@ impl Arguments {
             save,
             scale: scale.unwrap_or(3),
             frames,
+            audio: audio.unwrap_or_else(|| "auto".to_owned()),
         })
     }
 }
