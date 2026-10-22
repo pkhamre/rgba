@@ -6,7 +6,7 @@ Pinned Rust workspace, Google Rust style, safe-Rust/public-doc lints, synthetic
 CI checks, licensed reference preparation, and small logical commits are in
 place. Local debug/release checks pass; GitHub Actions was not run here.
 
-Standard result: **118 Rust unit/integration tests, one doctest, 22 Python
+Standard result: **124 Rust unit/integration tests, one doctest, 22 Python
 tests pass**. Both external tests remain optional/ignored by default.
 The isolated mGBA baseline passes 235/235 cases. Strict CPU comparison still
 fails unchanged: **2,124,072 matches / 125,928 failures** out of 2,250,000,
@@ -63,6 +63,19 @@ Implemented:
 
 Reproduction/build details: VALIDATION.md. Sound model/transport limits:
 AUDIO.md. Launch/controls/save/RTC policies: TEST_BUILD.md.
+
+## PipeWire / auto follow-up
+
+A user exposed a headerless-PCM decoding failure despite working MP3 playback.
+PipeWire now receives a self-describing, indefinitely sized AU stream. Native
+PipeWire 0.3.65 virtual-sink probes passed for explicit/auto selection. Auto
+also recovers from late process/writer failure, including while paused; a
+controlled late-error test skipped missing pacat and reached real ALSA-null.
+Startup means process started, not confirmed playback. See AUDIO.md.
+
+ALSA underruns on the user's real device remain unresolved by this change.
+Queue-drop counters are not hardware-underrun counters; the previous null-sink
+soak does not establish real-device pacing or speaker quality.
 
 ## Remaining work
 

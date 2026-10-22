@@ -19,7 +19,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let mut output = AudioOutput::open(backend)?;
     let start = Instant::now();
-    // A quiet 256 Hz square tone, independent channels, 512-frame packets.
+    // Quiet 256 Hz tone, right at half volume. Same phase avoids cancellation
+    // if the device downmixes to mono. Each packet contains 512 stereo frames.
     for packet in 0..seconds * 64 {
         let samples = (0..512)
             .map(|index| {
@@ -28,7 +29,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 } else {
                     -1000
                 };
-                [value, -value]
+                [value, value / 2]
             })
             .collect();
         output.submit(samples);
@@ -39,10 +40,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     // Let the bounded host queue reach the player before stopping it.
     std::thread::sleep(Duration::from_millis(250));
+    output.poll();
     eprintln!(
-        "Probe: seconds={seconds}, host_dropped={}",
+        "Probe: seconds={seconds}, player={:?}, host_dropped={}",
+        output.player_name(),
         output.dropped()
     );
+    if output.player_name().is_none() {
+        return Err("audio player stopped during the probe".into());
+    }
     if output.dropped() != 0 {
         return Err("audio probe lost output frames".into());
     }

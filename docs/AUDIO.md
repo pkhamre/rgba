@@ -34,55 +34,82 @@ this initial audio implementation as hardware-perfect.
 
 ## Linux output
 
-Desktop audio defaults to `--audio auto`. It tries installed `pw-cat`
-(PipeWire), `pacat` (PulseAudio), then `aplay` (ALSA). Select a backend with
-`--audio pipewire|pulse|alsa`, or disable output with `--audio off`.
-No shell is invoked and no native audio SDK is needed to compile the emulator.
-If tools/devices are unavailable, the window continues silently with a terminal
-warning. Device/player failures do not stop guest execution.
+Desktop defaults to `--audio auto`: pw-cat (PipeWire), pacat (PulseAudio),
+then aplay (ALSA). Select `--audio pipewire|pulse|alsa` to restrict selection
+to one player, or `--audio off` to disable host output. No shell is invoked
+and no native audio SDK is needed to compile the emulator.
 
-A worker applies a deterministic host-side DC-blocking high-pass filter and
-writes stereo signed-16 PCM. Pulse/ALSA receive raw little-endian samples;
-PipeWire receives self-describing AU with big-endian samples, a 24-byte header,
-and the standard unknown-length marker. There is no RIFF file-length ceiling
-or dependence on a version-specific `pw-cat --raw` option. The player resamples
-to the device rate. At most eight packets (each capped at 2,048 frames) are queued; a full queue
-drops output instead of blocking or changing emulated time. Drop counts are
-reported on exit. OS/player buffers add latency beyond this queue; 80 ms is
-requested, not guaranteed. PulseAudio also requests 20 ms processing intervals.
-The initial two-packet queue dropped 16,458 frames in one 600-frame Pulse-null
-run (and 51,022 after reducing the process interval). Increasing it to eight
-packets removed drops in the repeat 600-frame test. Normal desktop packets
-contain about 549 frames; the larger ceiling absorbs player delivery bursts.
-Pause and fast-forward mute new packets; previously
-buffered sound drains. Player processes are stopped/reaped on exit.
+A worker applies host-side DC filtering and writes signed-16 stereo PCM:
+- PipeWire receives self-describing AU: 24-byte header, 32,768 Hz, two channels,
+  big-endian PCM16, standard unknown-length marker. AU works on unseekable stdin,
+  has no RIFF length ceiling, and does not need version-specific raw-input flags.
+- Pulse/ALSA receive raw little-endian samples with explicit rate/channel flags.
+- The player resamples to the actual device rate. Eight packets of up to 2,048
+  frames are bounded; full queues reject output rather than block guest timing.
+- 80 ms device latency is requested, not guaranteed. Pulse also requests 20 ms
+  processing intervals. Normal desktop packets contain about 549 frames.
+- Pause/fast-forward mute new output; existing device buffers drain. Shutdown
+  stops/reaps the player and bounds waiting for its writer thread.
 
-CLI references checked:
-https://docs.pipewire.org/1.6/page_man_pw-cat_1.html
-https://manpages.debian.org/bookworm/pipewire-bin/pw-cat.1.en.html
-https://manpages.debian.org/bookworm/pulseaudio-utils/pacat.1.en.html
-https://manpages.debian.org/bookworm/alsa-utils/aplay.1.en.html
+The initial two-packet ceiling dropped 16,458 frames in a 600-frame Pulse-null
+run (51,022 with a smaller process interval). Eight packets removed drops in
+that repeat; it is not proof of real-device underrun-free playback.
 
-Host regressions cover PCM WAV headers/endianness/exclusive creation, DC removal,
-missing players, and a stalled consumer not blocking submission or shutdown.
-A 120-frame Xvfb + ALSA-null run produced 65,835 PCM frames with zero core/host
-queue drops. Null-device output tests transport, not speakers or sound quality.
-A longer controlled soak and latest-build repeat are documented with their
-build/configuration distinctions in VALIDATION.md. PipeWire flags were checked
-against current/Bookworm documentation. A user then demonstrated that the old
-headerless input was rejected by libsndfile (`Format not recognised`), despite
-working MP3 playback and a healthy PipeWire service. Explicit sample-format
-arguments did not select raw decoding. This was an integration defect.
+### PipeWire framing and auto recovery
 
-The AU fix passed an asset-free 10-second tone probe against actual PipeWire /
-pw-cat 0.3.65 with a 48 kHz virtual sink and manually linked stereo ports:
-zero host queue drops and no decoding error. This checks parsing/transport,
-not speakers or real-device underruns. `auto` still needs late-failure recovery
-beyond its original 40 ms startup check; that is separate from framing.
+A user reported working MP3 playback but `sndfile: ... Format not recognised`
+for the emulator. Our headerless stream plus format/rate options did not select
+raw decoding on that user's pw-cat. CLI behavior varies by version; this was
+our integration defect, not evidence of a stopped/missing PipeWire service.
 
-Probe without loading a game (quiet 256 Hz stereo test tone):
+AU framing removes that ambiguity. Local validation uses PipeWire/pw-cat 0.3.65,
+not the user's unreported version: native explicit and auto probes each ran for
+10 seconds through a real server/48 kHz virtual sink, manually linked stereo
+ports, with zero queue drops and no decoder failure. A separate 600-frame
+Emerald desktop run in auto mode used pw-cat and generated 329,175 PCM frames
+with zero core/host queue drops and no format error. Missing RTKit/D-Bus in the
+isolated fixture produced scheduling warnings, not a format failure. This is
+not a same-version reproduction of the original raw-mode error.
+
+Auto now supervises process exit and writer errors on every poll/submission,
+including empty packets while paused. A player that fails after the original
+40 ms startup window is stopped/reaped and selection advances once to each
+remaining candidate. Missing intermediate executables are skipped. Explicit
+selection never silently changes backend. Exhaustion reports silence once;
+there is no infinite respawn loop. A switch may introduce a short gap and
+bounded process-start overhead.
+
+Startup logs say a player **started**, not that playback is confirmed. A live
+but unrouted/muted process cannot be diagnosed by this supervisor alone.
+Host drop counts describe queue rejections/unavailable output, not device XRUNs,
+in-flight loss in a dying process, or confirmed delivery to speakers. Zero host
+drops can coexist with ALSA underruns. Hardware-clock pacing/underrun work is
+separate and is not claimed fixed by this framing/recovery change.
+
+Regression tests cover AU metadata/endianness, filtering, immediate and delayed
+child exit, failure with closed stdin while the child stays alive, paused
+recovery, explicit-backend exhaustion, missing tools and stalled consumers.
+An end-to-end injected late failure after the AU header fell through a missing
+pacat executable to real aplay/null; explicit pipewire correctly stayed silent
+and made the probe fail instead of claiming success.
+
+### Reproduce without BIOS or ROM
+
+A quiet 256 Hz tone (right channel at half volume, mono-safe):
 ```sh
+sh scripts/cargo.sh run --release -p gba-host --example audio_probe -- auto 3
 sh scripts/cargo.sh run --release -p gba-host --example audio_probe -- pipewire 3
 ```
-AU framing reference: https://www.mmsp.ece.mcgill.ca/Documents/AudioFormats/AU/AU.html
-and libsndfile 1.2.0 `src/au.c` (read as reference; no code imported).
+The probe reports the final player, rejects exhausted output, and fails on host
+queue drops. Speakers, sound quality, device XRUNs, and long-session drift still
+need real-device testing. Earlier 120-frame ALSA-null, real-time desktop soaks,
+and latest-build distinctions are documented in VALIDATION.md; do not extend
+those earlier results to the new PipeWire transport automatically.
+
+References:
+- https://docs.pipewire.org/1.6/page_man_pw-cat_1.html
+- https://manpages.debian.org/bookworm/pipewire-bin/pw-cat.1.en.html
+- https://manpages.debian.org/bookworm/pulseaudio-utils/pacat.1.en.html
+- https://manpages.debian.org/bookworm/alsa-utils/aplay.1.en.html
+- https://www.mmsp.ece.mcgill.ca/Documents/AudioFormats/AU/AU.html
+- libsndfile 1.2.0 `src/au.c` (format reference only; no code imported).

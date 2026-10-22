@@ -2,6 +2,7 @@
 //! No host callbacks or device timing can advance the emulated clock.
 
 use crate::stream_format::StreamFormat;
+use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
@@ -10,8 +11,180 @@ use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::thread;
 use std::thread::JoinHandle;
 
-/// Bounded asynchronous PCM transport. Drop stops/reaps the player process.
+struct Candidate {
+    name: &'static str,
+    command: Command,
+    format: StreamFormat,
+}
+
+/// Bounded asynchronous transport with ordered, one-attempt-per-player fallback.
+/// A live process is not proof of an audible/routed stream or freedom from XRUNs.
 pub struct AudioOutput {
+    player: Option<Player>,
+    remaining: VecDeque<Candidate>,
+    muted: bool,
+    dropped: u64,
+}
+
+impl AudioOutput {
+    /// Opens auto, pipewire, pulse, or alsa without invoking a shell.
+    /// Auto advances to the next player on both early and later process/I/O failure.
+    /// Explicit selections do not silently change backend.
+    pub fn open(backend: &str) -> io::Result<Self> {
+        let names: &[&str] = match backend {
+            "auto" => &["pipewire", "pulse", "alsa"],
+            "pipewire" => &["pipewire"],
+            "pulse" => &["pulse"],
+            "alsa" => &["alsa"],
+            _ => {
+                return Err(io::Error::other(
+                    "backend must be auto, pipewire, pulse, or alsa; skip opening output for off",
+                ));
+            }
+        };
+        let candidates = names
+            .iter()
+            .map(|name| {
+                let (program, arguments, format): (&str, &[&str], StreamFormat) = match *name {
+                    "pipewire" => (
+                        "pw-cat",
+                        &["--playback", "--latency=80ms", "-"],
+                        StreamFormat::AuBigEndian,
+                    ),
+                    "pulse" => (
+                        "pacat",
+                        &[
+                            "--playback",
+                            "--raw",
+                            "--rate=32768",
+                            "--channels=2",
+                            "--format=s16le",
+                            "--latency-msec=80",
+                            "--process-time-msec=20",
+                        ],
+                        StreamFormat::RawLittleEndian,
+                    ),
+                    _ => (
+                        "aplay",
+                        &[
+                            "--quiet",
+                            "--file-type=raw",
+                            "--format=S16_LE",
+                            "--channels=2",
+                            "--rate=32768",
+                            "--buffer-time=80000",
+                        ],
+                        StreamFormat::RawLittleEndian,
+                    ),
+                };
+                let mut command = Command::new(program);
+                command.args(arguments);
+                Candidate {
+                    name: program,
+                    command,
+                    format,
+                }
+            })
+            .collect();
+        Self::from_candidates(candidates)
+    }
+
+    fn from_candidates(remaining: VecDeque<Candidate>) -> io::Result<Self> {
+        let mut output = Self {
+            player: None,
+            remaining,
+            muted: false,
+            dropped: 0,
+        };
+        output.start_next()?;
+        Ok(output)
+    }
+
+    fn start_next(&mut self) -> io::Result<()> {
+        let mut last = io::Error::other("no remaining audio players");
+        while let Some(candidate) = self.remaining.pop_front() {
+            let name = candidate.name;
+            match Player::spawn(candidate) {
+                Ok(mut player) => {
+                    // This only catches immediate failures, not playback readiness.
+                    thread::sleep(std::time::Duration::from_millis(40));
+                    if let Some(reason) = player.failure() {
+                        eprintln!("Audio: {name} failed during startup: {reason}");
+                        last = io::Error::other(reason);
+                        continue;
+                    }
+                    player.set_muted(self.muted);
+                    eprintln!(
+                        "Audio: {name} started, 32768 Hz stereo (80 ms requested latency; not playback confirmation)"
+                    );
+                    self.player = Some(player);
+                    return Ok(());
+                }
+                Err(error) => {
+                    eprintln!("Audio: could not start {name}: {error}");
+                    last = error;
+                }
+            }
+        }
+        Err(io::Error::other(format!(
+            "audio unavailable: {last}; install pw-cat/pacat/aplay or use --audio off"
+        )))
+    }
+
+    /// Checks child exit and writer errors, including while paused/no PCM is sent.
+    /// A backend restart may cause a short gap and bounded process-start overhead.
+    pub fn poll(&mut self) {
+        let reason = self.player.as_mut().and_then(Player::failure);
+        if let Some(reason) = reason {
+            if let Some(player) = self.player.take() {
+                eprintln!(
+                    "Audio: {} stopped: {reason}; checking remaining players",
+                    player.name
+                );
+                self.dropped += player.dropped;
+                drop(player);
+            }
+            if let Err(error) = self.start_next() {
+                eprintln!("{error}; continuing silently");
+            }
+        }
+    }
+
+    /// Most recently checked live player process, not a device-readiness signal.
+    #[must_use]
+    pub fn player_name(&self) -> Option<&str> {
+        self.player.as_ref().map(|player| player.name)
+    }
+
+    /// Mutes new packets during pause/fast-forward. Device buffers still drain.
+    pub fn set_muted(&mut self, muted: bool) {
+        self.muted = muted;
+        if let Some(player) = &self.player {
+            player.set_muted(muted);
+        }
+    }
+
+    /// Sends PCM without waiting for playback; even an empty packet polls health.
+    /// At most eight packets of up to 2,048 frames are queued.
+    pub fn submit(&mut self, samples: Vec<[i16; 2]>) {
+        self.poll();
+        if let Some(player) = &mut self.player {
+            player.submit(samples);
+        } else if !self.muted {
+            self.dropped += samples.len() as u64;
+        }
+    }
+
+    /// Frames rejected by host queues/unavailable output. Not a device-underrun
+    /// counter or a delivery receipt: a dying player can lose in-flight samples.
+    #[must_use]
+    pub fn dropped(&self) -> u64 {
+        self.dropped + self.player.as_ref().map_or(0, |player| player.dropped)
+    }
+}
+
+struct Player {
+    name: &'static str,
     child: Child,
     sender: Option<SyncSender<Vec<[i16; 2]>>>,
     worker: Option<JoinHandle<()>>,
@@ -20,78 +193,13 @@ pub struct AudioOutput {
     dropped: u64,
 }
 
-impl AudioOutput {
-    /// Opens `auto`, `pipewire`, `pulse`, or `alsa` without invoking a shell.
-    /// Installed players resample the 32,768 Hz stream for the actual device.
-    pub fn open(backend: &str) -> io::Result<Self> {
-        let candidates: &[&str] = match backend {
-            "auto" => &["pipewire", "pulse", "alsa"],
-            "pipewire" => &["pipewire"],
-            "pulse" => &["pulse"],
-            "alsa" => &["alsa"],
-            _ => {
-                return Err(io::Error::other(
-                    "audio backend must be auto, pipewire, pulse, alsa, or off",
-                ));
-            }
-        };
-        let mut last = io::Error::other(
-            "no audio player found; install pw-cat, pacat, or aplay, or use --audio off",
-        );
-        for candidate in candidates {
-            let (program, args): (&str, &[&str]) = match *candidate {
-                "pipewire" => ("pw-cat", &["--playback", "--latency=80ms", "-"]),
-                "pulse" => (
-                    "pacat",
-                    &[
-                        "--playback",
-                        "--raw",
-                        "--rate=32768",
-                        "--channels=2",
-                        "--format=s16le",
-                        "--latency-msec=80",
-                        "--process-time-msec=20",
-                    ],
-                ),
-                _ => (
-                    "aplay",
-                    &[
-                        "--quiet",
-                        "--file-type=raw",
-                        "--format=S16_LE",
-                        "--channels=2",
-                        "--rate=32768",
-                        "--buffer-time=80000",
-                    ],
-                ),
-            };
-            let mut command = Command::new(program);
-            command.args(args);
-            let format = if *candidate == "pipewire" {
-                StreamFormat::AuBigEndian
-            } else {
-                StreamFormat::RawLittleEndian
-            };
-            match Self::spawn(command, format) {
-                Ok(mut output) => {
-                    // Catch immediate connection/CLI failures before trying the next tool.
-                    thread::sleep(std::time::Duration::from_millis(40));
-                    if let Some(status) = output.child.try_wait()? {
-                        last = io::Error::other(format!("{program} exited on startup: {status}"));
-                        continue;
-                    }
-                    eprintln!("Audio: {program}, 32768 Hz stereo (80 ms requested latency)");
-                    return Ok(output);
-                }
-                Err(error) => last = error,
-            }
-        }
-        Err(io::Error::other(format!(
-            "audio unavailable: {last}; install pw-cat/pacat/aplay, select --audio pulse/alsa, or use --audio off"
-        )))
-    }
-
-    fn spawn(mut command: Command, format: StreamFormat) -> io::Result<Self> {
+impl Player {
+    fn spawn(candidate: Candidate) -> io::Result<Self> {
+        let Candidate {
+            name,
+            mut command,
+            format,
+        } = candidate;
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -110,7 +218,7 @@ impl AudioOutput {
             let mut filter = HighPass::default();
             if let Err(error) = pipe.write_all(format.header()) {
                 if !thread_failed.swap(true, Ordering::Relaxed) {
-                    eprintln!("Audio stream header failed: {error}");
+                    eprintln!("Audio {name} header failed: {error}");
                 }
                 return;
             }
@@ -122,15 +230,14 @@ impl AudioOutput {
                 let bytes = filter.encode(&samples, format);
                 if let Err(error) = pipe.write_all(&bytes) {
                     if !thread_failed.swap(true, Ordering::Relaxed) {
-                        eprintln!(
-                            "Audio output stopped: {error}; gameplay continues silently. Select another --audio backend on restart."
-                        );
+                        eprintln!("Audio {name} write failed: {error}");
                     }
                     break;
                 }
             }
         });
         Ok(Self {
+            name,
             child,
             sender: Some(sender),
             worker: Some(worker),
@@ -140,23 +247,29 @@ impl AudioOutput {
         })
     }
 
-    /// Disables new packets during pause/fast-forward. Already buffered device
-    /// samples drain; core sound generation/guest timing are unaffected.
-    pub fn set_muted(&self, muted: bool) {
+    fn failure(&mut self) -> Option<String> {
+        // Check process status even without a new write: stdin may still look open
+        // after a short-lived descendant inherited it, or the worker may be idle.
+        match self.child.try_wait() {
+            Ok(Some(status)) => Some(format!("exited with {status}")),
+            Err(error) => Some(format!("cannot inspect player: {error}")),
+            Ok(None) if self.failed.load(Ordering::Relaxed) => {
+                Some("stream writer failed".to_owned())
+            }
+            Ok(None) => None,
+        }
+    }
+
+    fn set_muted(&self, muted: bool) {
         self.muted.store(muted, Ordering::Relaxed);
     }
 
-    /// Sends PCM without blocking emulation; at most eight packets are queued.
-    pub fn submit(&mut self, samples: Vec<[i16; 2]>) {
+    fn submit(&mut self, samples: Vec<[i16; 2]>) {
         if samples.is_empty() || self.muted.load(Ordering::Relaxed) {
             return;
         }
         let count = samples.len() as u64;
-        if samples.len() > 2048 {
-            self.dropped += count;
-            return;
-        }
-        if self.failed.load(Ordering::Relaxed) {
+        if samples.len() > 2048 || self.failed.load(Ordering::Relaxed) {
             self.dropped += count;
             return;
         }
@@ -169,19 +282,14 @@ impl AudioOutput {
             }
         }
     }
-
-    /// PCM frames dropped by the bounded host queue or a failed player.
-    #[must_use]
-    pub fn dropped(&self) -> u64 {
-        self.dropped
-    }
 }
 
-impl Drop for AudioOutput {
+impl Drop for Player {
     fn drop(&mut self) {
         self.failed.store(true, Ordering::Relaxed);
         self.sender.take();
-        // Kill first: the worker may be blocked writing into the player's pipe.
+        // Stop first to unblock pipe writes, then reap. Never wait indefinitely
+        // for a worker whose pipe was inherited by an unexpected descendant.
         let _ = self.child.kill();
         let _ = self.child.wait();
         if let Some(worker) = self.worker.take() {
@@ -192,7 +300,6 @@ impl Drop for AudioOutput {
                 }
                 thread::sleep(std::time::Duration::from_millis(5));
             }
-            // Do not freeze the window on an unexpectedly stuck external pipe.
         }
     }
 }
@@ -221,6 +328,74 @@ impl HighPass {
 
 #[cfg(test)]
 mod tests {
+    use super::{AudioOutput, Candidate};
+    use crate::stream_format::StreamFormat;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{Duration, Instant};
+
+    fn candidate(name: &'static str, command: Command) -> Candidate {
+        Candidate {
+            name,
+            command,
+            format: StreamFormat::RawLittleEndian,
+        }
+    }
+    fn shell(name: &'static str, script: &str) -> Candidate {
+        let mut command = Command::new("sh");
+        command.args(["-c", script]);
+        candidate(name, command)
+    }
+    fn single(command: Command) -> std::io::Result<AudioOutput> {
+        AudioOutput::from_candidates(vec![candidate("test", command)].into())
+    }
+    struct Trigger {
+        path: PathBuf,
+    }
+    impl Trigger {
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "gba-audio-trigger-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&path).expect("new fixture directory");
+            Self { path }
+        }
+        fn player(&self) -> Candidate {
+            let mut command = Command::new("sh");
+            command.args([
+                "-c",
+                "while [ ! -e \"$1\" ]; do sleep 0.01; done; exit 9",
+                "_",
+            ]);
+            command.arg(self.path.join("exit"));
+            candidate("exits-late", command)
+        }
+        fn fire(&self) {
+            fs::write(self.path.join("exit"), b"exit").expect("release child");
+        }
+    }
+    impl Drop for Trigger {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+    fn wait_for(output: &mut AudioOutput, name: Option<&str>) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            output.submit(Vec::new());
+            if output.player_name() == name {
+                break;
+            }
+            assert!(Instant::now() < deadline, "player did not reach {name:?}");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     #[test]
     fn filter_is_stereo_little_endian_and_removes_dc() {
         let mut f = super::HighPass::default();
@@ -256,19 +431,75 @@ mod tests {
     #[test]
     fn missing_player_and_invalid_backend_are_recoverable() {
         let command = std::process::Command::new("gba-audio-player-does-not-exist");
-        assert!(
-            super::AudioOutput::spawn(command, crate::stream_format::StreamFormat::RawLittleEndian)
-                .is_err()
-        );
+        assert!(single(command).is_err());
         assert!(super::AudioOutput::open("invalid").is_err());
     }
+    #[test]
+    fn early_exit_advances_to_next_candidate() {
+        let mut output = AudioOutput::from_candidates(
+            vec![
+                shell("exits-now", "exit 7"),
+                shell("working", "exec cat >/dev/null"),
+            ]
+            .into(),
+        )
+        .expect("fallback");
+        assert_eq!(output.player_name(), Some("working"));
+        output.submit(vec![[10, -10]; 512]);
+        assert_eq!(output.dropped(), 0);
+    }
+
+    #[test]
+    fn late_exit_falls_back_even_while_paused_and_no_audio_is_written() {
+        let trigger = Trigger::new();
+        let mut output = AudioOutput::from_candidates(
+            vec![trigger.player(), shell("working", "exec cat >/dev/null")].into(),
+        )
+        .expect("initial player");
+        assert_eq!(output.player_name(), Some("exits-late"));
+        output.set_muted(true);
+        trigger.fire();
+        wait_for(&mut output, Some("working"));
+        assert!(output.muted, "fallback preserves pause/fast-forward mute");
+        output.set_muted(false);
+        output.submit(vec![[10, -10]; 512]);
+        assert_eq!(output.dropped(), 0);
+    }
+
+    #[test]
+    fn broken_stdin_with_live_process_triggers_fallback() {
+        let mut output = AudioOutput::from_candidates(
+            vec![
+                shell("closes-stdin", "exec 0<&-; while :; do :; done"),
+                shell("working", "exec cat >/dev/null"),
+            ]
+            .into(),
+        )
+        .expect("initial player");
+        assert_eq!(output.player_name(), Some("closes-stdin"));
+        output.submit(vec![[10, -10]; 512]);
+        wait_for(&mut output, Some("working"));
+    }
+
+    #[test]
+    fn explicit_candidate_exhaustion_is_silent_without_restarting_a_failed_player() {
+        let trigger = Trigger::new();
+        let mut output =
+            AudioOutput::from_candidates(vec![trigger.player()].into()).expect("player");
+        trigger.fire();
+        wait_for(&mut output, None);
+        for _ in 0..3 {
+            output.submit(vec![[0, 0]; 4]);
+        }
+        assert!(output.remaining.is_empty());
+        assert_eq!(output.dropped(), 12);
+    }
+
     #[test]
     fn stalled_player_does_not_block_emulation_or_shutdown() {
         let mut command = std::process::Command::new("sh");
         command.args(["-c", "while :; do :; done"]);
-        let mut output =
-            super::AudioOutput::spawn(command, crate::stream_format::StreamFormat::RawLittleEndian)
-                .expect("test child");
+        let mut output = single(command).expect("test child");
         let start = std::time::Instant::now();
         for _ in 0..100 {
             output.submit(vec![[0, 0]; 1024]);
