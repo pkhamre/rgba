@@ -118,9 +118,9 @@ A producer persistently below the target cannot be fixed by a finite reserve.
 
 This exposed a local default-3x-scale performance problem: a 600-frame
 Xvfb/PipeWire run delivered about 26,121 frames/sec (12.695 s wall time for
-10.046 s emulated time), despite zero queue drops. Pixel-presentation overhead
-is being investigated separately; this reserve alone is not a solution to
-sustained underproduction.
+10.046 s emulated time), despite zero queue drops. Renderer and transport
+changes below address that measured overhead; the reserve alone is not a
+solution to sustained underproduction.
 
 A native virtual-sink probe with injected 60 ms stalls every second completed
 before and after priming with zero host queue drops; the new timing metrics
@@ -145,6 +145,35 @@ measurement. Catch-up cannot fix a core that consistently runs below real time.
 
 Tests cover the offset cap/slew, null-sink bound, accepted-frame accounting,
 partial-reserve discard, and stale packets across pause/fast-forward epochs.
+
+### Presentation throughput
+
+The desktop uploads 240x160 pixels and uses XRender nearest-neighbor scaling
+when RENDER >= 0.6 and the root visual has a matching picture format. Without
+that support it retains CPU integer scaling. CPU packing converts each source
+pixel once and duplicates scanlines; unchanged pixels reuse the server pixmap.
+Every emulated frame and audio packet still executes. No video frame-skipping
+policy is enabled.
+
+The PPU also avoids divisions for in-range reads and selects the first two
+compositor layers instead of sorting all layers. Original wrapping/tie behavior
+is regression-tested; see ACCURACY.md. Exit work timings measure wall time in
+emulation and presentation, not CPU utilization or device XRUNs.
+
+On an isolated Xvfb/PipeWire 0.3.65 virtual sink at default 3x:
+- 1,800 frames: 30.136 wall seconds, 987,525 PCM frames, about 32,847 submitted
+  frames/sec, maximum submission gap 26.2 ms, zero core/host drops.
+- 6,000 frames including Continue, movement, pause/resume, F12 and F5:
+  3,291,750 PCM frames, about 32,818 submitted frames/sec, maximum gap 27.5 ms,
+  zero core/host drops. Paused overlay remained frozen and save bytes unchanged.
+- All destination pixels at scales 1..6 match CPU nearest-neighbor reference,
+  both with RENDER enabled and with it disabled.
+
+These runs differ in length/scenario from the original 600-frame measurement;
+they are not a controlled speedup-factor benchmark or a speaker/XRUN test.
+The longer fixture emitted PipeWire internal `spa.loop queue full` warnings
+around pause/resume despite zero emulator queue drops. Idle transport behavior
+still needs investigation; successful submission is not proof of sound delivery.
 
 ### Reproduce without BIOS or ROM
 

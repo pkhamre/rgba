@@ -6,7 +6,7 @@ rust-version.workspace = true
 
 [dependencies]
 gba-host = { path = "../gba-host" }
-x11rb = { version = "0.13.2", default-features = false }
+x11rb = { version = "0.13.2", default-features = false, features = ["render"] }
 
 [lints]
 workspace = true

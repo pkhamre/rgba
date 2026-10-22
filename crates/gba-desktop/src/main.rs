@@ -2,8 +2,10 @@
 
 mod arguments;
 mod desktop;
+mod frame_cache;
 mod frame_pacing;
 mod overlay;
+mod presentation;
 
 use std::env;
 use std::process::ExitCode;

@@ -10,8 +10,9 @@ sh scripts/check.sh
 sh scripts/cargo.sh test --workspace --release
 ```
 
-Current standard result: **135 Rust unit/integration tests, one doctest, and 22
+Current standard result: **138 Rust unit/integration tests, one doctest, and 23
 Python tool tests pass**. Two ignored optional tests require reference assets.
+An additional ignored presentation test requires a dedicated Xvfb display.
 The standard tests use synthetic data only; CI needs no BIOS/game/test ROM.
 
 ## Optional strict CPU reference comparison
@@ -113,6 +114,21 @@ synthetic Flash, RTC, save, and framebuffer fixtures. The separate
 `python3 scripts/validate_emerald.py --output artifacts/new-save-check` scenario
 now verifies actual game-menu save/restart/Continue/re-save/Continue with
 isolated saves and captured images; see VALIDATION.md.
+
+## Optional X11 scaling regression
+
+This asset-free test checks every destination pixel at scales 1..6. Only run
+against a dedicated display; its largest window is 1440x960:
+
+```sh
+xvfb-run -a -s '-screen 0 1600x1200x24' sh scripts/cargo.sh test -p gba-desktop x11_scaled_pixels_match_cpu_reference -- --ignored
+xvfb-run -a -s '-screen 0 1600x1200x24 -extension RENDER' sh scripts/cargo.sh test -p gba-desktop x11_scaled_pixels_match_cpu_reference -- --ignored
+```
+
+Both enabled-RENDER and disabled-RENDER fixtures passed locally. This validates
+host scaling/transport, not the hardware accuracy of guest pixels.
+`validate_desktop.py --scale 3` additionally exercises default-scale presentation;
+its historical default remains 1 for comparison with older soak runs.
 
 ## Optional desktop smoke
 

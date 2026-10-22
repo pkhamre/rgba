@@ -1,7 +1,9 @@
 use crate::arguments;
 use crate::arguments::Arguments;
+use crate::frame_cache::FrameCache;
 use crate::frame_pacing::FramePacing;
 use crate::overlay;
+use crate::presentation::Presentation;
 use gba_host::Session;
 use gba_host::audio_output::AudioOutput;
 use gba_host::screenshot;
@@ -69,7 +71,6 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
     let masks = [visual.red_mask, visual.green_mask, visual.blue_mask];
     let window = connection.generate_id()?;
     let gc = connection.generate_id()?;
-    let pixmap = connection.generate_id()?;
     let width = 240 * args.scale;
     let height = 160 * args.scale;
     connection
@@ -95,9 +96,17 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
     connection
         .create_gc(gc, window, &CreateGCAux::new())?
         .check()?;
-    connection
-        .create_pixmap(depth, pixmap, window, width, height)?
-        .check()?;
+    let presentation = Presentation::create(
+        &connection,
+        window,
+        gc,
+        depth,
+        screen.root_visual,
+        args.scale,
+    )?;
+    let upload_scale = presentation.upload_scale;
+    let upload_width = 240 * upload_scale;
+    let upload_height = 160 * upload_scale;
     let title = format!("Rust GBA - {} [preview]", session.title());
     connection
         .change_property8(
@@ -158,7 +167,8 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
     let image_order = setup.image_byte_order;
     let bytes_per_pixel = usize::from(format.bits_per_pixel) / 8;
     let scanline_pad = usize::from(format.scanline_pad) / 8;
-    let stride = (usize::from(width) * bytes_per_pixel).div_ceil(scanline_pad) * scanline_pad;
+    let stride =
+        (usize::from(upload_width) * bytes_per_pixel).div_ceil(scanline_pad) * scanline_pad;
     let rows_per_request = ((connection.maximum_request_bytes() - 64) / stride).max(1);
     connection.map_window(window)?.check()?;
     connection.flush()?;
@@ -183,6 +193,11 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
     let mut fast = false;
     let mut running = true;
     let mut frame_count = 0u64;
+    let mut emulation_work = Duration::ZERO;
+    let mut max_emulation_work = Duration::ZERO;
+    let mut presentation_work = Duration::ZERO;
+    let mut presentation_count = 0u64;
+    let mut frame_cache = FrameCache::default();
     let frame_time = Duration::from_secs_f64(280896.0 / 16777216.0);
     let mut next_frame = Instant::now();
     let mut pacing = FramePacing::default();
@@ -269,7 +284,11 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
         }
         session.machine_mut().set_keys(buttons);
         if !paused {
+            let started = Instant::now();
             session.machine_mut().run_frame()?;
+            let elapsed = started.elapsed();
+            emulation_work += elapsed;
+            max_emulation_work = max_emulation_work.max(elapsed);
             frame_count += 1;
         }
         let samples = session.machine_mut().take_audio();
@@ -277,34 +296,42 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
             output.set_muted(paused || fast);
             output.submit(samples);
         }
+        let presentation_started = Instant::now();
         let overlay = paused.then(|| overlay::paused(session.machine().screen()));
-        let image = pack_pixels(
-            overlay
-                .as_deref()
-                .unwrap_or_else(|| session.machine().screen()),
-            args.scale,
-            bytes_per_pixel,
-            stride,
-            image_order == ImageOrder::LSB_FIRST,
-            masks,
-        );
-        for row in (0..usize::from(height)).step_by(rows_per_request) {
-            let rows = rows_per_request.min(usize::from(height) - row);
-            connection.put_image(
-                ImageFormat::Z_PIXMAP,
-                pixmap,
-                gc,
-                width,
-                rows as u16,
-                0,
-                row as i16,
-                0,
-                depth,
-                &image[row * stride..(row + rows) * stride],
-            )?;
+        let pixels = overlay
+            .as_deref()
+            .unwrap_or_else(|| session.machine().screen());
+        if frame_cache.update(pixels) {
+            let image = pack_pixels(
+                pixels,
+                upload_scale,
+                bytes_per_pixel,
+                stride,
+                image_order == ImageOrder::LSB_FIRST,
+                masks,
+            );
+            for row in (0..usize::from(upload_height)).step_by(rows_per_request) {
+                let rows = rows_per_request.min(usize::from(upload_height) - row);
+                connection.put_image(
+                    ImageFormat::Z_PIXMAP,
+                    presentation.pixmap,
+                    gc,
+                    upload_width,
+                    rows as u16,
+                    0,
+                    row as i16,
+                    0,
+                    depth,
+                    &image[row * stride..(row + rows) * stride],
+                )?;
+            }
         }
-        connection.copy_area(pixmap, window, gc, 0, 0, 0, 0, width, height)?;
+        // Always copy the cached pixmap: Expose must repaint even if game pixels
+        // did not change. CPU/PPU/audio still advance once per emulated frame.
+        presentation.present(&connection)?;
         connection.flush()?;
+        presentation_work += presentation_started.elapsed();
+        presentation_count += 1;
         let current_revision = session.machine().save_revision();
         if current_revision != revision {
             revision = current_revision;
@@ -350,12 +377,19 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
         );
     }
     eprintln!(
-        "Completed frames={frame_count} clocks={} PCM={} core_dropped={}",
+        "Work timing: emulation_avg_ms={:.3} max_emulation_ms={:.3} presentation_avg_ms={:.3}",
+        emulation_work.as_secs_f64() * 1000.0 / frame_count.max(1) as f64,
+        max_emulation_work.as_secs_f64() * 1000.0,
+        presentation_work.as_secs_f64() * 1000.0 / presentation_count.max(1) as f64
+    );
+    eprintln!(
+        "Completed frames={frame_count} clocks={} PCM={} core_dropped={} video_uploads={}",
         session.machine().clocks(),
         session.machine().audio_frames(),
-        session.machine().audio_dropped()
+        session.machine().audio_dropped(),
+        frame_cache.uploads()
     );
-    connection.free_pixmap(pixmap)?;
+    presentation.close(&connection)?;
     connection.free_gc(gc)?;
     connection.flush()?;
     Ok(())
@@ -406,7 +440,7 @@ fn button(symbol: u32) -> u16 {
     }
 }
 
-fn pack_pixels(
+pub(crate) fn pack_pixels(
     pixels: &[u32],
     scale: u16,
     bytes: usize,
@@ -416,29 +450,51 @@ fn pack_pixels(
 ) -> Vec<u8> {
     let scale = usize::from(scale);
     let mut image = vec![0; stride * 160 * scale];
-    for y in 0..160 * scale {
-        for x in 0..240 * scale {
-            let color = pixels[(y / scale) * 240 + x / scale];
-            let channels = [(color >> 16) & 255, (color >> 8) & 255, color & 255];
-            let mut packed = 0;
-            for (channel, mask) in channels.into_iter().zip(masks) {
-                if mask != 0 {
-                    packed |= ((channel * (mask >> mask.trailing_zeros()) / 255)
-                        << mask.trailing_zeros())
-                        & mask;
+    let standard_rgb = masks == [0xff0000, 0xff00, 0xff];
+    let layout = masks.map(|mask| {
+        if mask == 0 {
+            (0, 0, 0)
+        } else {
+            let shift = mask.trailing_zeros();
+            (mask, shift, mask >> shift)
+        }
+    });
+    // Convert each of the 38,400 source pixels once, not every enlarged pixel.
+    // Duplicate horizontally, then copy the completed scanline vertically.
+    for y in 0..160 {
+        let row = y * scale * stride;
+        for x in 0..240 {
+            let color = pixels[y * 240 + x];
+            let packed = if standard_rgb {
+                color & 0x00ff_ffff
+            } else {
+                let channels = [(color >> 16) & 255, (color >> 8) & 255, color & 255];
+                let mut packed = 0;
+                for (channel, (mask, shift, maximum)) in channels.into_iter().zip(layout) {
+                    if mask != 0 {
+                        packed |= ((channel * maximum / 255) << shift) & mask;
+                    }
                 }
-            }
+                packed
+            };
             let encoded = if little {
                 packed.to_le_bytes()
             } else {
                 packed.to_be_bytes()
             };
-            let offset = y * stride + x * bytes;
-            if little {
-                image[offset..offset + bytes].copy_from_slice(&encoded[..bytes]);
+            let pixel = if little {
+                &encoded[..bytes]
             } else {
-                image[offset..offset + bytes].copy_from_slice(&encoded[4 - bytes..]);
+                &encoded[4 - bytes..]
+            };
+            let offset = row + x * scale * bytes;
+            for repeat in 0..scale {
+                let start = offset + repeat * bytes;
+                image[start..start + bytes].copy_from_slice(pixel);
             }
+        }
+        for repeat in 1..scale {
+            image.copy_within(row..row + stride, row + repeat * stride);
         }
     }
     image
@@ -446,6 +502,79 @@ fn pack_pixels(
 
 #[cfg(test)]
 mod tests {
+    fn reference_pixels(
+        pixels: &[u32],
+        scale: u16,
+        bytes: usize,
+        stride: usize,
+        little: bool,
+        masks: [u32; 3],
+    ) -> Vec<u8> {
+        let scale = usize::from(scale);
+        let mut image = vec![0; stride * 160 * scale];
+        for y in 0..160 * scale {
+            for x in 0..240 * scale {
+                let color = pixels[(y / scale) * 240 + x / scale];
+                let channels = [(color >> 16) & 255, (color >> 8) & 255, color & 255];
+                let mut packed = 0;
+                for (channel, mask) in channels.into_iter().zip(masks) {
+                    if mask != 0 {
+                        packed |= ((channel * (mask >> mask.trailing_zeros()) / 255)
+                            << mask.trailing_zeros())
+                            & mask;
+                    }
+                }
+                let encoded = if little {
+                    packed.to_le_bytes()
+                } else {
+                    packed.to_be_bytes()
+                };
+                let offset = y * stride + x * bytes;
+                if little {
+                    image[offset..offset + bytes].copy_from_slice(&encoded[..bytes]);
+                } else {
+                    image[offset..offset + bytes].copy_from_slice(&encoded[4 - bytes..]);
+                }
+            }
+        }
+        image
+    }
+
+    #[test]
+    fn optimized_packing_matches_reference_for_scales_formats_masks_and_padding() {
+        let mut seed = 0x1234_5678u32;
+        let pixels: Vec<_> = (0..240 * 160)
+            .map(|_| {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                seed
+            })
+            .collect();
+        for scale in [1, 3, 6] {
+            for bytes in [3, 4] {
+                for little in [false, true] {
+                    for masks in [
+                        [0xff0000, 0xff00, 0xff],
+                        [0xff, 0xff00, 0xff0000],
+                        [0x3ff00000, 0xffc00, 0x3ff],
+                        [0, 0xff00, 0xff],
+                    ] {
+                        if bytes == 3 && masks[0] == 0x3ff00000 {
+                            continue;
+                        }
+                        let stride = 240 * usize::from(scale) * bytes + 8;
+                        let expected =
+                            reference_pixels(&pixels, scale, bytes, stride, little, masks);
+                        let actual =
+                            super::pack_pixels(&pixels, scale, bytes, stride, little, masks);
+                        assert_eq!(
+                            actual, expected,
+                            "scale={scale}, bytes={bytes}, little={little}, masks={masks:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn pixels_are_scaled_and_packed_without_display() {
         let mut pixels = vec![0; 240 * 160];

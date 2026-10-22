@@ -433,6 +433,8 @@ impl Ppu {
 
 #[cfg(test)]
 mod tests {
+    use super::Ppu;
+
     #[test]
     fn selecting_front_two_layers_matches_stable_full_sort_including_ties() {
         let mut seed = 0x1234_5678u32;
@@ -468,6 +470,7 @@ mod tests {
             }
         }
     }
+
     #[test]
     fn halfword_fast_path_preserves_all_in_range_and_wrapping_reads() {
         for length in [1, 2, 3, 1024, 0x18000] {
@@ -483,7 +486,6 @@ mod tests {
             }
         }
     }
-    use super::Ppu;
 
     #[test]
     fn bitmap_mode_three_renders_and_forced_blank_is_white() {

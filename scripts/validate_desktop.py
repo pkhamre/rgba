@@ -85,17 +85,17 @@ class X11:
         if name:self.x.XFree(name)
         return value
 
-    def snapshot(self):
-        pointer=self.x.XGetImage(self.display,self.window,0,0,240,160,0xffffffffffffffff,2)
+    def snapshot(self,scale=1):
+        pointer=self.x.XGetImage(self.display,self.window,0,0,240*scale,160*scale,0xffffffffffffffff,2)
         if not pointer:raise RuntimeError("X11 image unavailable")
         try:
             image=C.cast(pointer,C.POINTER(Image)).contents
             if image.bpp!=32 or (image.red_mask,image.green_mask,image.blue_mask)!=(0xff0000,0xff00,0xff):
                 raise RuntimeError("capture harness requires a 32-bpp RGB TrueColor X server")
-            source=C.string_at(image.data,image.stride*160);output=bytearray()
+            source=C.string_at(image.data,image.stride*160*scale);output=bytearray()
             for y in range(160):
                 for x in range(240):
-                    offset=y*image.stride+x*4
+                    offset=y*scale*image.stride+x*scale*4
                     pixel=int.from_bytes(source[offset:offset+4],"little" if image.byte_order==0 else "big")
                     output.extend([(pixel>>16)&255,(pixel>>8)&255,pixel&255])
             return bytes(output)
@@ -132,14 +132,14 @@ def validate(args):
         config=output/"alsa-null.conf";config.write_text("pcm.!default { type null }\n")
         env["ALSA_CONFIG_PATH"]=str(config)
     log_path=output/"desktop.log"
-    report=dict(target_frames=args.frames,backend=args.audio,host=platform.platform(),
+    report=dict(target_frames=args.frames,backend=args.audio,scale=args.scale,host=platform.platform(),
                 save_sha256=hashlib.sha256(original).hexdigest(),max_rss_kib=0,
                 binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest())
     start=time.monotonic();process=None;display=None
     try:
         with log_path.open("x") as log:
             process=subprocess.Popen([str(binary),"--bios",str(args.bios.resolve()),"--rom",str(args.rom.resolve()),
-                                      "--save",str(save),"--scale","1","--audio",args.audio,"--frames",str(args.frames)],
+                                      "--save",str(save),"--scale",str(args.scale),"--audio",args.audio,"--frames",str(args.frames)],
                                      env=env,cwd=ROOT,stdout=log,stderr=subprocess.STDOUT)
             display=X11()
             for _ in range(100):
@@ -155,11 +155,11 @@ def validate(args):
                 if elapsed>=74 and not paused:
                     display.tap(0x20);time.sleep(.3)
                     if b"PAUSED" not in display.title():raise AssertionError("pause title missing")
-                    image=display.snapshot()
+                    image=display.snapshot(args.scale)
                     if image[(68*240+92)*3:(68*240+92)*3+3]!=bytes([255]*3):raise AssertionError("pause border missing")
                     if image[(70*240+100)*3:(70*240+100)*3+3]!=bytes([16,24,32]):raise AssertionError("pause panel missing")
                     time.sleep(1)
-                    if display.snapshot()!=image:raise AssertionError("paused display changed")
+                    if display.snapshot(args.scale)!=image:raise AssertionError("paused display changed")
                     (output/"paused-window.ppm").write_bytes(b"P6\n240 160\n255\n"+image)
                     before=set((ROOT/"artifacts").glob(f"screenshot-*-{process.pid}.ppm"))
                     display.tap(0xffc9);time.sleep(.3)
@@ -215,6 +215,7 @@ def main():
     parser.add_argument("--save",type=Path,required=True)
     parser.add_argument("--output",type=Path,required=True)
     parser.add_argument("--frames",type=int,default=115200)
+    parser.add_argument("--scale",type=int,choices=range(1,7),default=1)
     parser.add_argument("--audio",choices=["alsa","pulse","pipewire","off"],default="alsa")
     args=parser.parse_args()
     if not 6000<=args.frames<=200000:parser.error("frames must be 6000..200000")
