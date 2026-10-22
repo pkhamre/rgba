@@ -1,6 +1,6 @@
 //! Software scanline renderer. Mid-scanline fetch/contention accuracy is pending.
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Pixel {
     color: u16,
     layer: u8,
@@ -24,7 +24,14 @@ impl Default for Ppu {
 }
 
 fn half(bytes: &[u8], offset: usize) -> u16 {
-    u16::from(bytes[offset % bytes.len()]) | (u16::from(bytes[(offset + 1) % bytes.len()]) << 8)
+    // Almost all PPU register/palette/tile reads are already inside the slice.
+    // Avoid two integer divisions for each of these hot-path halfword reads;
+    // retain the original wrapping behavior for out-of-range addresses.
+    if offset < bytes.len().saturating_sub(1) {
+        u16::from(bytes[offset]) | (u16::from(bytes[offset + 1]) << 8)
+    } else {
+        u16::from(bytes[offset % bytes.len()]) | (u16::from(bytes[(offset + 1) % bytes.len()]) << 8)
+    }
 }
 
 fn signed_reference(io: &[u8], offset: usize) -> i32 {
@@ -85,32 +92,23 @@ impl Ppu {
             }
             for x in 0..240 {
                 let mask = Self::window_mask(x, y, io, object_window[x]);
-                let mut layers = [backdrop; 6];
-                let mut count = 1;
+                let mut top = backdrop;
+                let mut below = None;
                 for bg in 0..4 {
                     if display & (0x100 << bg) == 0 || mask & (1 << bg) == 0 {
                         continue;
                     }
                     if let Some(pixel) = self.background(bg, x, y, io, palette, vram) {
-                        layers[count] = pixel;
-                        count += 1;
+                        Self::insert_layer(pixel, &mut top, &mut below);
                     }
                 }
                 if display & 0x1000 != 0
                     && mask & 0x10 != 0
                     && let Some(pixel) = objects[x]
                 {
-                    layers[count] = pixel;
-                    count += 1;
+                    Self::insert_layer(pixel, &mut top, &mut below);
                 }
-                layers[..count].sort_by_key(|pixel| {
-                    (
-                        pixel.priority,
-                        if pixel.layer == 4 { 0 } else { pixel.layer + 1 },
-                    )
-                });
-                let top = layers[0];
-                let below = if count > 1 { layers[1] } else { backdrop };
+                let below = below.unwrap_or(backdrop);
                 let mut color = top.color;
                 let blend = half(io, 0x50);
                 let first = blend & (1 << top.layer) != 0;
@@ -135,6 +133,23 @@ impl Ppu {
         for bg in 0..2 {
             self.reference[bg][0] += i32::from(half(io, 0x22 + bg * 0x10) as i16);
             self.reference[bg][1] += i32::from(half(io, 0x26 + bg * 0x10) as i16);
+        }
+    }
+
+    fn insert_layer(pixel: Pixel, top: &mut Pixel, below: &mut Option<Pixel>) {
+        let key = |pixel: Pixel| {
+            (
+                pixel.priority,
+                if pixel.layer == 4 { 0 } else { pixel.layer + 1 },
+            )
+        };
+        // Only the front two layers affect the existing compositor. Strict
+        // comparisons preserve insertion order for ties, just like stable sort.
+        if key(pixel) < key(*top) {
+            *below = Some(*top);
+            *top = pixel;
+        } else if below.is_none_or(|old| key(pixel) < key(old)) {
+            *below = Some(pixel);
         }
     }
 
@@ -418,6 +433,56 @@ impl Ppu {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn selecting_front_two_layers_matches_stable_full_sort_including_ties() {
+        let mut seed = 0x1234_5678u32;
+        for _ in 0..256 {
+            let backdrop = super::Pixel {
+                color: 0,
+                layer: 5,
+                priority: 4,
+                semi: false,
+            };
+            let mut all = vec![backdrop];
+            let mut top = backdrop;
+            let mut below = None;
+            for _ in 0..5 {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                let pixel = super::Pixel {
+                    color: seed as u16,
+                    layer: ((seed >> 16) % 6) as u8,
+                    priority: ((seed >> 24) % 6) as u8,
+                    semi: seed & 1 != 0,
+                };
+                all.push(pixel);
+                let mut sorted = all.clone();
+                sorted.sort_by_key(|pixel| {
+                    (
+                        pixel.priority,
+                        if pixel.layer == 4 { 0 } else { pixel.layer + 1 },
+                    )
+                });
+                super::Ppu::insert_layer(pixel, &mut top, &mut below);
+                assert_eq!(top, sorted[0]);
+                assert_eq!(below, Some(sorted[1]));
+            }
+        }
+    }
+    #[test]
+    fn halfword_fast_path_preserves_all_in_range_and_wrapping_reads() {
+        for length in [1, 2, 3, 1024, 0x18000] {
+            let bytes: Vec<u8> = (0..length).map(|index| (index * 37) as u8).collect();
+            for offset in 0..length * 2 + 4 {
+                let expected = u16::from(bytes[offset % length])
+                    | (u16::from(bytes[(offset + 1) % length]) << 8);
+                assert_eq!(
+                    super::half(&bytes, offset),
+                    expected,
+                    "len={length}, offset={offset}"
+                );
+            }
+        }
+    }
     use super::Ppu;
 
     #[test]

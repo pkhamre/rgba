@@ -38,6 +38,18 @@ proof.
   write-failure dirty-state retention; desktop integer-scale presentation and
   headless screenshots share the same core framebuffer.
 
+## Renderer optimization regressions
+
+The PPU uses direct indexing for in-range halfword reads and keeps the previous
+wrapping fallback. The compositor selects only the first two layers instead of
+sorting every layer. Tests compare reads with the original modulo implementation
+and front-layer selection with stable full sorting, including ties.
+
+A fresh-save 4,000-frame scripted Emerald run remains byte-identical to the
+previous PPM (1,123,584,003 clocks, PC 080008c8). The full strict CPU comparison
+still has 2,124,072 matches and 125,928 failures. These are unchanged-behavior
+regressions, not new evidence of physical rendering or timing accuracy.
+
 ## Explicit gaps
 
 - Reserved/unsupported encoding policies and PC snapshot differences remain.
