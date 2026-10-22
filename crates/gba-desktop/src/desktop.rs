@@ -1,5 +1,6 @@
 use crate::arguments;
 use crate::arguments::Arguments;
+use crate::overlay;
 use gba_host::Session;
 use gba_host::screenshot;
 use std::env;
@@ -187,7 +188,17 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
                     held[code] = true;
                     match symbol {
                         0xff1b => running = false,
-                        0x20 if first => paused = !paused,
+                        0x20 if first => {
+                            paused = !paused;
+                            let label = format!("{title}{}", if paused { " - PAUSED" } else { "" });
+                            connection.change_property8(
+                                PropMode::REPLACE,
+                                window,
+                                AtomEnum::WM_NAME,
+                                AtomEnum::STRING,
+                                label.as_bytes(),
+                            )?;
+                        }
                         0xff09 => fast = true,
                         0xffc2 if first => flush_save(session),
                         0xffc9 if first => {
@@ -236,8 +247,11 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
             session.machine_mut().run_frame()?;
             frame_count += 1;
         }
+        let overlay = paused.then(|| overlay::paused(session.machine().screen()));
         let image = pack_pixels(
-            session.machine().screen(),
+            overlay
+                .as_deref()
+                .unwrap_or_else(|| session.machine().screen()),
             args.scale,
             bytes_per_pixel,
             stride,

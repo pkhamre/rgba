@@ -2,6 +2,7 @@
 
 mod arguments;
 mod desktop;
+mod overlay;
 
 use std::env;
 use std::process::ExitCode;

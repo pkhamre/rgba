@@ -27,6 +27,7 @@ sh scripts/cargo.sh run --release -p gba-desktop -- \
 Arrows/WASD: D-pad. Z: A. X: B. Enter: Start. Backspace: Select. Q: L. E: R.
 Space: pause. Hold Tab: fast-forward. F5: flush save. F12: screenshot under
 `artifacts/` (binary PPM, never overwrite). Escape/window close: quit and flush.
+Pausing shows a PAUSED overlay and title indicator without modifying guest pixels.
 Focus loss releases held keys. The keyboard map is read at startup.
 
 Boot and intro use the normal BIOS/game code; allow time or hold Tab.
