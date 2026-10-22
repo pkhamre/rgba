@@ -13,6 +13,7 @@ import json
 import re
 import struct
 import subprocess
+import sys
 import time
 import wave
 from pathlib import Path
@@ -45,7 +46,6 @@ def wav_summary(path):
         frames = source.getnframes()
         data = source.readframes(frames)
     values = array.array("h", data)
-    import sys
     if sys.byteorder != "little":
         values.byteswap()
     if len(set(values)) < 2:

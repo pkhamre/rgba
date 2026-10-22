@@ -1,9 +1,10 @@
 # Rust GBA emulator
 
 A from-scratch Rust ARM7TDMI/GBA emulator targeting Linux desktop and hardware
-accuracy. **A testable desktop preview is available, without audio.** The supplied
-BIOS boots normally; scripted Emerald input reaches Professor Birch's new-game
-introduction. Full gameplay and hardware accuracy are not yet verified.
+accuracy. **The desktop preview includes video, controls, pause indication,
+and audio.** The supplied BIOS boots normally. Game-menu save/restart/Continue
+is verified, and the first battle succeeded in user testing. Full-game and
+hardware accuracy remain unverified.
 
 ## Try the preview
 
@@ -18,8 +19,9 @@ This uses your existing `bins/gba_bios.bin` and
 You can select another ROM: `sh scripts/play.sh path/to/game.gba --scale 2`.
 
 Controls: arrows/WASD = D-pad; Z/X = A/B; Enter = Start; Backspace = Select;
-Q/E = L/R. Space pauses, Tab fast-forwards, F5 flushes the cartridge save,
-F12 captures a PPM screenshot, and Escape/window close quits.
+Q/E = L/R. Space pauses with a PAUSED indicator; Tab fast-forwards.
+F5 flushes the cartridge save, F12 captures a PPM screenshot, and Escape/window
+close quits.
 Hold Tab through boot/intro if desired; use Enter at the title and Z to confirm.
 
 Save data defaults to the ROM's `.sav` file; previous data is kept in
@@ -35,6 +37,16 @@ sh scripts/smoke-emerald.sh
 
 It runs 4,000 frames with scripted input and writes a screenshot under
 `artifacts/`. It does not verify a battle, in-game save/continue, or audio.
+
+Audio uses an installed `pw-cat`, `pacat`, or `aplay` client. Select
+`--audio pipewire|pulse|alsa`, or use `--audio off`. Missing audio devices/tools
+produce a terminal warning; gameplay still runs. Pause/fast-forward mute new
+audio output. See [docs/AUDIO.md](docs/AUDIO.md) for setup and accuracy limits.
+
+A 32-minute automated real-time desktop soak passed. This used a virtual
+display/null audio sink, not a human listening session. Save-cycle and desktop
+test reproduction, tested-build distinctions, and remaining human validation
+are documented in [docs/VALIDATION.md](docs/VALIDATION.md).
 
 ## Build and check
 

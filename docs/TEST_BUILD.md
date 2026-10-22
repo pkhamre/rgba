@@ -1,7 +1,9 @@
 # Desktop preview
 
 This is a testable vertical slice, **not the accepted playable release**.
-Video and keyboard input work; audio output is not implemented.
+Video, keyboard input, visible pause state, and Linux audio output are implemented.
+Game-menu save/restart/Continue is locally verified. The first battle succeeded
+in user testing; full-game and physical-hardware accuracy remain unverified.
 
 ## Launch
 
@@ -62,19 +64,25 @@ xvfb-run -a sh scripts/play.sh --scale 1 --frames 120
 
 ## Verified locally
 
-- Genuine BIOS boot reaches cartridge entry at `08000000`: 7,492,424 CPU
+- Genuine BIOS boot reaches cartridge entry at `08000000`: 7,610,482 CPU
   activities, 75,998,009 model clocks. No BIOS bypass or high-level SWI shortcut.
 - Supplied Emerald runs 4,000 frames with scripted Start/A presses and renders
   Professor Birch's “Hi! Sorry to keep you waiting!” new-game dialogue.
 - Xvfb desktop smoke: window maps, injected F12 produces a screenshot, paused
   X11 window pixels match the core framebuffer byte-for-byte, and Escape
   exits successfully. A separate bounded 40-frame window run also exits cleanly.
+- A controlled 115,200-frame real-time desktop soak completed in 32 minutes
+  19.5 seconds with zero core/host audio queue drops, unchanged save data,
+  and stable sampled RSS. This used the earlier audio-buffer limit; the latest
+  build passed a 6,000-frame repeat and a fixed-Pulse-buffer smoke. See
+  VALIDATION.md for exact scope, builds, commands, and limits.
 - Standard synthetic checks, release tests, and all 235 isolated mGBA CPU-table
   cases pass. The full strict CPU-vector suite still fails; see TESTING.md.
 - Save size validation, SRAM save round-trip/backup, write-failure recovery,
   sidecar alias rejection, Flash commands/banking, and RTC serial control reads
-  have synthetic regressions. This does **not** establish an Emerald
-  save/restart/continue round-trip.
+  have synthetic regressions. An additional ordinary-input scenario now creates
+  a real Emerald save, restarts/Continues, re-saves a newer generation, and
+  Continues again with matching player/location; backups match the earlier file.
 
 Repeat the headless game smoke with `sh scripts/smoke-emerald.sh`. This needs
 the local proprietary assets, is not part of CI, and creates a fresh PPM file.
@@ -87,13 +95,16 @@ sprite evaluation limits, precise affine/mid-line effects, and other rendering
 edge cases are not hardware-validated. DMA arbitration/startup and interrupt
 sampling remain approximate. STOP shares HALT behavior; serial has no peer.
 
-Sound registers/FIFO timing can request DMA, but there is no PSG synthesis,
-mixed sample stream, or audio device output. Flash writes finish immediately
+PSG and Direct Sound now produce 32,768 Hz stereo PCM; Linux playback uses
+pw-cat/pacat/aplay with bounded buffering and host DC filtering. Install one
+client or choose `--audio off`. Audio quality on real speakers and exact PSG/
+PWM/trigger edge behavior remain unverified; see AUDIO.md. Flash writes finish immediately
 rather than exposing busy/toggle timing. GPIO RTC writes/alarms are incomplete.
 There is no GamePak prefetch implementation, and CPU/reference disagreements
 remain. Gameplay appearance is not evidence these gaps are resolved.
 
-Not yet verified: player setup through the first controllable outdoor area,
-first battle, Emerald menu save/restart/continue, a 30-minute interactive
-session, reference-frame comparisons, or sustained real-time video/audio on a
-named end-user host. Native Wayland without XWayland is unsupported.
+Remaining: a varied 30-minute human gameplay/listening session, reference-frame/
+audio comparisons, physical peripheral tests, and performance on a named
+end-user host. The automated soak is constrained indoor movement, not broad
+gameplay coverage. Native Wayland without XWayland is unsupported.
+Settings/remapping and emulator save states remain deferred.

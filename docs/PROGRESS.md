@@ -1,72 +1,77 @@
 # Implementation progress
 
-## Foundation
+## Foundation and CPU/bus
 
-Pinned Rust workspace, lockfile, Google Rust style policy, safe-Rust/public-doc
-lints, bounded runners, synthetic CI checks, licensed reference preparation,
-and small logical commits are in place. GitHub Actions is configured, not run
-here. The local isolated musl build uses an ignored Zig linker for dependency
-build scripts; normal Linux hosts use a native linker.
+Pinned Rust workspace, Google Rust style, safe-Rust/public-doc lints, synthetic
+CI checks, licensed reference preparation, and small logical commits are in
+place. Local debug/release checks pass; GitHub Actions was not run here.
 
-## CPU/bus: implementation present, accuracy acceptance still open
+Standard result: **118 Rust unit/integration tests, one doctest, 22 Python
+tests pass**. Both external tests remain optional/ignored by default.
+The isolated mGBA baseline passes 235/235 cases. Strict CPU comparison still
+fails unchanged: **2,124,072 matches / 125,928 failures** out of 2,250,000,
+27 of 45 groups fully matching. No reference mismatches are waived.
 
-ARM/Thumb interpreter, banked state, explicit pipeline, exceptions, memory map,
-baseline N/S/I timing, WAITCNT, multiply carry reconstruction, and independent
-CPU replay are implemented. BIOS initialization exposed an SPSR storage defect:
-arbitrary saved bits must be storable without switching the current mode.
-That correction has a synthetic BIOS regression and removes 3,053 strict
-reference failures.
+ARM/Thumb, banked state, pipeline, exceptions, memory map, baseline N/S/I timing,
+WAITCNT, and multiply carry reconstruction are present. CPU/bus accuracy
+acceptance remains open: physical reserved-encoding evidence, complete bus
+signals/LOCK, precise cycle ordering, BIOS latch, open bus, prefetch, and
+contention. See CPU_RESEARCH.md and ACCURACY.md.
 
-Current standard checks: **106 Rust unit/integration tests, one doctest, and
-13 Python tests pass**. Both optional external tests are ignored by default.
-The isolated mGBA baseline passes 235/235 cases. Strict SingleStepTests comparison
-still fails: **2,124,072 matches / 125,928 failures** out of 2,250,000; 27 of 45
-groups match fully. The first diagnostics remain documented, not waived.
-See CPU_RESEARCH.md and UPSTREAM_CPU_TESTS.md for provenance and limits.
+## Runnable preview and requested follow-up
 
-Physical reserved-encoding evidence, exact transactions/code-data/LOCK signals,
-internal-cycle placement, BIOS latch, open bus, prefetch, and contention remain
-open. No physical-GBA capture or complete hardware-test ROM was run.
-
-## Testable vertical slice: provisional milestones 2–4
-
-The request for something testable led to provisional devices/presentation while
-CPU/bus accuracy work remains open. This does not accept the later milestones'
-hardware-validation exit criteria.
+Provisional peripherals/presentation span milestones 2–5; that does not accept
+their hardware-validation exit criteria.
 
 Implemented:
-- LCD line timing/status/IRQ, interrupt entry, timers/cascade, DMA triggers,
-  keypad, HALT progression, system I/O, and a scanline software renderer.
-- Normal BIOS boot to cartridge entry, with no boot/SWI bypass.
-- Banked 128 KiB Flash, ID/program/erase, GPIO RTC reads/control, SRAM, and
-  shared host save loading/atomic replacement/backups/error handling.
-- Linux X11/XWayland desktop, integer scaling, keyboard controls, pause,
-  fast-forward, screenshots, save flushing, and native frame-rate pacing.
-- Headless frame execution, screenshots, and scripted held-key changes.
+- LCD line/status/IRQ timing, IRQ entry, timers/cascade, DMA, keypad, HALT,
+  system I/O, and scanline software graphics.
+- Genuine BIOS boot and SWI execution, without a boot shortcut.
+- Banked Flash/SRAM, GPIO RTC reads/control, atomic saves/backups/alias guards.
+- X11/XWayland presentation, keyboard controls, integer scaling, pause,
+  fast-forward, screenshots, save flushing, and native wall-clock pacing.
+- Visible host-only PAUSED panel and title indicator; guest pixels/state are
+  not modified. Paused window stability is tested under Xvfb.
+- Clocked square/sweep/envelope, wave/noise PSG, real timer-fed Direct Sound
+  FIFOs/DMA, stereo routing/mixing, and bounded 32,768 Hz PCM output.
+- Linux playback through pw-cat/pacat/aplay, host DC filtering, bounded queues,
+  nonfatal device errors, mute during pause/fast-forward, and WAV capture.
 
-Verified with the supplied local assets:
-- BIOS reaches `08000000` after 7,492,424 CPU activities / 75,998,009 clocks.
-- 4,000 scripted frames reach Professor Birch's new-game introduction.
-- Xvfb maps the desktop window; injected F12 works; captured window pixels
-  match the core framebuffer; Escape and bounded window runs exit successfully.
-- Synthetic save round-trip/backup/error tests pass; a real in-game save/
-  continue cycle has **not** yet been established.
+## Verified evidence
 
-See TEST_BUILD.md for launch commands and explicit timing/rendering/RTC limits.
-No audio output or PSG synthesis exists. No hardware-accuracy claim follows
-from a successful game screenshot.
+- BIOS reaches `08000000` at 75,998,009 model clocks. The audio scheduler now
+  splits HALT into smaller activities: 7,610,482 activities versus the older
+  7,492,424, with unchanged boot clocks (not extra guest instructions).
+- Emerald reaches Professor Birch in 4,000 scripted frames.
+- The user reports successful first-battle gameplay in the previous preview.
+- Ordinary input now creates a real game-menu save in Littleroot, starts a new
+  process, Continues with matching AAAAAA/location, re-saves generation 2,
+  and Continues again. The host backup matches generation 1 exactly. New-core
+  generation 1 matches the pre-audio save byte-for-byte.
+- PCM captures are stereo/32,768 Hz, nonconstant, and have deterministic counts
+  with zero core queue drops. A capture exposed/fixed muted-PSG DC clipping.
+- A real-time Xvfb/ALSA-null desktop soak completed **115,200 frames**,
+  **1,928.760 emulated seconds / 1,939.539 wall seconds**, **63,201,600 PCM
+  frames**, zero core/host drops, unchanged save, clean exit, and stable sampled
+  RSS (18,132 KiB). It exercised Continue, pause/F12/F5, and repeated indoor
+  left/right movement, not varied game progression.
+- That long run used build 1097388's two-packet buffer. A later Pulse-null test
+  exposed burst drops; an eight-packet ceiling and explicit process interval
+  fixed the 600-frame repeat. The latest build passed a separate 6,000-frame
+  desktop repeat: 3,291,750 PCM frames, zero drops, pause checks and save intact.
+  Do not attribute the older long run to the newer buffer configuration.
 
-## Next work and release gate
+Reproduction/build details: VALIDATION.md. Sound model/transport limits:
+AUDIO.md. Launch/controls/save/RTC policies: TEST_BUILD.md.
 
-1. Continue independent CPU/bus and hardware-backed peripheral validation.
-2. Complete sound generation/mixing and Linux audio integration; test FIFO/
-   DMA/timer interactions before claiming audible correctness.
-3. Exercise player setup, controllable movement, the first battle, and genuine
-   Emerald save/restart/continue; turn findings into regressions.
-4. Compare video/audio against independent evidence; improve scanline/dot and
-   arbitration accuracy rather than treating provisional rendering as final.
-5. Profile on a named host and complete the 30-minute interactive release test.
+## Remaining work
 
-The approved first-release acceptance checkpoint remains open. This preview is
-ready for user testing, not certified for full-game compatibility or safe use of
-a sole valuable save.
+The approved release checkpoint remains open. There has been no physical-GBA
+capture, full hardware-test-ROM execution, reference video/audio comparison, or
+speaker listening test here. The controlled soak is not a varied 30-minute human
+playthrough, and performance on the user's host is not certified.
+
+Next: hardware-backed CPU/bus/device/audio tests; refine DMA/PPU/PSG edge cases
+and reference captures; listen and check latency/underruns on real devices;
+exercise broader gameplay. Settings, key/controller remapping, and emulator
+save states remain explicitly deferred, separate from cartridge saves.

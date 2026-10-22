@@ -125,7 +125,5 @@ fn help_needs_no_assets() {
         .output()
         .expect("runner launches");
     assert!(output.status.success());
-    assert!(
-        String::from_utf8_lossy(&output.stdout).contains("audio output is not yet implemented")
-    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("sound is emulated, not played"));
 }

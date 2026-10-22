@@ -10,7 +10,7 @@ sh scripts/check.sh
 sh scripts/cargo.sh test --workspace --release
 ```
 
-Current standard result: **106 Rust unit/integration tests, one doctest, and 13
+Current standard result: **118 Rust unit/integration tests, one doctest, and 22
 Python tool tests pass**. Two ignored optional tests require reference assets.
 The standard tests use synthetic data only; CI needs no BIOS/game/test ROM.
 
@@ -99,7 +99,7 @@ do not replace or suppress strict reference-vector failures.
 ## Supplied-asset BIOS and game smoke
 
 The README's bounded `--stop-at 08000000 --steps 8000000` command now succeeds:
-7,492,424 CPU activities, 75,998,009 clocks, cartridge entry at `08000000`.
+7,610,482 CPU activities, 75,998,009 clocks, cartridge entry at `08000000`.
 POSTFLG and the BIOS's zero-SPSR initialization no longer block normal boot.
 
 ```sh
@@ -109,8 +109,10 @@ sh scripts/smoke-emerald.sh
 This executes 4,000 display frames with scripted Start/A presses and captures
 Professor Birch's new-game introduction. Inspect the PPM output; the script
 does not automatically assert visual correctness. Core/host checks use
-synthetic Flash, RTC, save, and framebuffer fixtures; they do not establish an
-Emerald menu save/restart/continue round-trip.
+synthetic Flash, RTC, save, and framebuffer fixtures. The separate
+`python3 scripts/validate_emerald.py --output artifacts/new-save-check` scenario
+now verifies actual game-menu save/restart/Continue/re-save/Continue with
+isolated saves and captured images; see VALIDATION.md.
 
 ## Optional desktop smoke
 
@@ -126,7 +128,12 @@ Window mapping, keyboard routing, framebuffer transport, and clean exit passed.
 Those local artifacts are ignored (`artifacts/desktop-smoke.json` and
 `artifacts/desktop-xvfb.log`); this is not a physical-display latency test.
 
-See TEST_BUILD.md for known limits and outstanding acceptance work: audio,
-first battle, real in-game save/continue, and a 30-minute interactive run.
+PSG/Direct Sound and Linux audio transport are implemented. Game save/Continue
+is locally verified; the first battle succeeded in user testing. A 32-minute
+controlled real-time desktop soak passed on the earlier buffer configuration;
+a 6,000-frame latest-build repeat and fixed-Pulse smoke also passed. See
+VALIDATION.md for exact scope/builds, and AUDIO.md for sound limitations.
+Human listening, varied interactive gameplay, and physical/reference comparisons
+remain outstanding.
 Clock counts are model outputs, not hardware measurements. Proprietary assets
 remain unchanged and excluded from CI.

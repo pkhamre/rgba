@@ -21,7 +21,7 @@ Trace files contain v1 post-activity state; exec/skip, halt, and irq identify th
 --frames COUNT runs display frames instead of counting CPU activities.
 --screenshot PATH writes the final 240x160 framebuffer as a binary PPM image.
 --input FRAME:BUTTONS changes held keys (e.g. 400:start, 410:none).
-This is a development runner; audio output is not yet implemented.";
+Headless runner: sound is emulated, not played. Use scripted_session for WAV capture.";
 
 impl Arguments {
     pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Self, String> {

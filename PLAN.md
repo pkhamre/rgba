@@ -119,8 +119,11 @@ standard checks pass, but independent reference mismatches remain. Provisional
 parts of milestones 2–4 now provide genuine BIOS boot, rendered Emerald intro/
 new-game dialogue, keyboard controls, Flash/RTC, saves, and an X11 desktop.
 This user-requested testable vertical slice does not accept those milestones'
-accuracy criteria or the first-release checkpoint. Audio, first battle,
-real in-game save/continue, and sustained interactive validation remain open.
+accuracy criteria or the first-release checkpoint. Audio synthesis/playback is
+now implemented provisionally; real game-menu save/Continue cycles pass locally,
+and the first battle succeeded in user testing. A controlled real-time desktop
+soak passed; varied human gameplay/listening and hardware/reference validation
+remain open. Settings/remapping and save states are deferred follow-up requests.
 
 ## Work policy
 

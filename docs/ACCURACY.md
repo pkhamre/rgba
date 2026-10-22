@@ -2,7 +2,8 @@
 
 **Target: hardware accuracy. Current status: testable, incomplete desktop preview.**
 Normal BIOS boot and Emerald's new-game introduction work. This is not a
-cycle-perfect, full-game, audio-capable, or accepted playable-release claim.
+cycle-perfect, full-game, or accepted playable-release claim. Audio is now
+implemented provisionally; listening and physical sound fidelity remain open.
 
 ## References and findings
 
@@ -62,8 +63,10 @@ proof.
 - Device advancement and DMA arbitration occur at CPU-activity boundaries;
   precise startup, priority/preemption, bus ownership, and IRQ sampling need
   hardware validation. STOP is currently HALT; serial has no peer.
-- Audio registers/FIFO timing can request DMA, but there is no PSG synthesis,
-  mixed sample output, or audio device integration.
+- PSG/Direct Sound mixing and Linux playback now exist. PWM rate conversion,
+  wave RAM shift-register readback, frequency-write/trigger timing quirks,
+  analog filtering/aliasing and FIFO edge behavior remain approximate.
+  See AUDIO.md; synthetic/transport tests do not establish audible fidelity.
 - Flash program/erase completes instantly; busy/toggle timing is missing.
   RTC reads/control work, but date/time writes, alarms, and persistence do not.
 - Memory quirks have synthetic tests, not exhaustive physical-hardware tests.
@@ -108,6 +111,9 @@ hardware test ROM, mGBA-emulator differential run, or fresh physical capture
 has been completed. BIOS boot reaches cartridge entry; 4,000 scripted Emerald
 frames reach Professor Birch's introduction. Xvfb window pixels match the core
 framebuffer, which verifies host transport rather than rendering accuracy.
-First battle, in-game save/continue, audio, reference frames, sustained real-time
-performance on a named host, and a 30-minute interactive run remain unverified.
+First battle succeeded in user testing. Real game save/Continue/re-save/Continue
+is locally verified. A controlled 32-minute real-time desktop soak and shorter
+latest-build repeat passed, using Xvfb/null audio; see VALIDATION.md for build
+and scope distinctions. Reference frames, speaker quality, broad interactive
+coverage, and sustained performance on an end-user machine remain unverified.
 See TEST_BUILD.md for the runnable preview and its explicit limits.

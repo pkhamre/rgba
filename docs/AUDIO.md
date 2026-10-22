@@ -27,7 +27,7 @@ These checks do not establish physical sound fidelity.
 Known approximations: fixed 32,768 Hz host output even when SOUNDBIAS requests
 higher PWM rates; no analog PWM reconstruction; wave RAM uses indexed banks,
 not physical rotating-register readback. Envelope/sweep/length trigger edge
-quirks, DAC offsets, powered-off behavior, FIFO underrun behavior, exact
+quirks, frequency-write retiming, DAC offsets, powered-off behavior, FIFO underrun behavior, exact
 timer/DMA arbitration, and anti-aliasing still need hardware-backed tests.
 The current mixer treats master-disabled output as silence. Do not describe
 this initial audio implementation as hardware-perfect.
@@ -50,7 +50,8 @@ requested, not guaranteed. PulseAudio also requests 20 ms processing intervals.
 The initial two-packet queue dropped 16,458 frames in one 600-frame Pulse-null
 run (and 51,022 after reducing the process interval). Increasing it to eight
 packets removed drops in the repeat 600-frame test. Normal desktop packets
-contain about 549 frames; the larger ceiling absorbs player delivery bursts. Pause and fast-forward mute new packets; previously
+contain about 549 frames; the larger ceiling absorbs player delivery bursts.
+Pause and fast-forward mute new packets; previously
 buffered sound drains. Player processes are stopped/reaped on exit.
 
 CLI references checked:
@@ -63,3 +64,6 @@ Host regressions cover PCM WAV headers/endianness/exclusive creation, DC removal
 missing players, and a stalled consumer not blocking submission or shutdown.
 A 120-frame Xvfb + ALSA-null run produced 65,835 PCM frames with zero core/host
 queue drops. Null-device output tests transport, not speakers or sound quality.
+A longer controlled soak and latest-build repeat are documented with their
+build/configuration distinctions in VALIDATION.md. PipeWire flags were checked
+against current/Bookworm documentation; no live PipeWire server was tested here.

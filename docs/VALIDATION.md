@@ -72,6 +72,8 @@ pause/frozen-display checks passed, isolated save unchanged.
 A longer real-time run completed 115,200 frames: 1,928.760 emulated seconds
 in 1,939.539 wall seconds (32 minutes 19.5 seconds), 63,201,600 PCM frames,
 zero core/host queue drops, sampled RSS 18,132 KiB, clean exit, save unchanged.
+Host: workspace container, Intel Core i5-10400 @ 2.90 GHz, four-vCPU quota,
+x86_64 Linux 7.0.0-38-generic. Other validation work ran concurrently.
 It loaded Continue and repeatedly moved left/right inside the Littleroot house.
 This is a controlled soak, not a varied 30-minute human playthrough.
 
