@@ -59,6 +59,7 @@ impl AudioOutput {
                         "--channels=2",
                         "--format=s16le",
                         "--latency-msec=80",
+                        "--process-time-msec=20",
                     ],
                 ),
                 _ => (
@@ -104,7 +105,7 @@ impl AudioOutput {
             .stdin
             .take()
             .ok_or_else(|| io::Error::other("audio player stdin unavailable"))?;
-        let (sender, receiver) = mpsc::sync_channel::<Vec<[i16; 2]>>(2);
+        let (sender, receiver) = mpsc::sync_channel::<Vec<[i16; 2]>>(8);
         let muted = Arc::new(AtomicBool::new(false));
         let failed = Arc::new(AtomicBool::new(false));
         let thread_muted = Arc::clone(&muted);
@@ -143,7 +144,7 @@ impl AudioOutput {
         self.muted.store(muted, Ordering::Relaxed);
     }
 
-    /// Sends PCM without blocking emulation; at most two packets are queued.
+    /// Sends PCM without blocking emulation; at most eight packets are queued.
     pub fn submit(&mut self, samples: Vec<[i16; 2]>) {
         if samples.is_empty() || self.muted.load(Ordering::Relaxed) {
             return;

@@ -43,10 +43,14 @@ warning. Device/player failures do not stop guest execution.
 
 A worker applies a deterministic host-side DC-blocking high-pass filter and
 writes stereo signed-16 little-endian PCM. The player resamples to the device
-rate. At most two packets (each capped at 2,048 frames) are queued; a full queue
+rate. At most eight packets (each capped at 2,048 frames) are queued; a full queue
 drops output instead of blocking or changing emulated time. Drop counts are
 reported on exit. OS/player buffers add latency beyond this queue; 80 ms is
-requested, not guaranteed. Pause and fast-forward mute new packets; previously
+requested, not guaranteed. PulseAudio also requests 20 ms processing intervals.
+The initial two-packet queue dropped 16,458 frames in one 600-frame Pulse-null
+run (and 51,022 after reducing the process interval). Increasing it to eight
+packets removed drops in the repeat 600-frame test. Normal desktop packets
+contain about 549 frames; the larger ceiling absorbs player delivery bursts. Pause and fast-forward mute new packets; previously
 buffered sound drains. Player processes are stopped/reaped on exit.
 
 CLI references checked:
