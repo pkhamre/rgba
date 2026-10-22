@@ -350,7 +350,7 @@ impl Apu {
                     {
                         i32::from(channel.volume)
                     } else {
-                        0
+                        -i32::from(channel.volume)
                     }
                 }
                 2 => {
@@ -360,6 +360,7 @@ impl Apu {
                     } else {
                         byte & 15
                     });
+                    let value = value * 2 - 15;
                     let volume = registers[0x73];
                     if volume & 0x80 != 0 {
                         value * 3 / 4
@@ -376,11 +377,11 @@ impl Apu {
                     if self.noise & 1 == 0 {
                         i32::from(channel.volume)
                     } else {
-                        0
+                        -i32::from(channel.volume)
                     }
                 }
             };
-            levels[index] = amplitude * 2 - 15;
+            levels[index] = amplitude;
         }
         let control = half(registers, 0x80);
         let mix = half(registers, 0x82);
@@ -422,6 +423,28 @@ mod tests {
         r[0x89] = 2;
         r
     }
+    #[test]
+    fn muted_psg_channels_do_not_clip_direct_sound_with_dc() {
+        let mut a = Apu::default();
+        let mut r = registers();
+        for channel in &mut a.channels {
+            channel.enabled = true;
+            channel.volume = 0;
+        }
+        r[0x80] = 0x77;
+        r[0x81] = 0xff;
+        r[0x82] = 2;
+        assert_eq!(a.mix(&r), [0, 0], "zero envelope/wave volume is silent");
+        r[0x82] |= 4;
+        r[0x83] = 3;
+        a.held[0] = 10;
+        assert_eq!(
+            a.mix(&r),
+            [2560, 2560],
+            "quiet PSG must not bias or clip PCM"
+        );
+    }
+
     #[test]
     fn partitioning_clock_advancement_preserves_pcm() {
         let mut a = Apu::default();
