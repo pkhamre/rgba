@@ -253,17 +253,21 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<RunOutcome, Box
             }
         }
     };
-    let mut bindings = crate::keybindings::KeyBindings::default();
+    let mut bindings = KeyBindings::default();
+    let mut gamepad_bindings = crate::gamepad::GamepadBindings::default();
     let mut settings_warning = None;
     match session.read_settings() {
         Ok(Some(bytes)) => match std::str::from_utf8(&bytes)
-            .map_err(|_| crate::keybindings::BindingError::InvalidFormat)
-            .and_then(crate::keybindings::KeyBindings::decode)
+            .map_err(|_| "settings are not valid UTF-8".to_owned())
+            .and_then(crate::gamepad::decode_settings)
         {
-            Ok(saved) => bindings = saved,
+            Ok((saved_keyboard, saved_gamepad)) => {
+                bindings = saved_keyboard;
+                gamepad_bindings = saved_gamepad;
+            }
             Err(error) => {
-                settings_warning = Some(format!("KEY SETTINGS INVALID: {error:?}"));
-                eprintln!("Ignoring invalid key settings: {error:?}");
+                settings_warning = Some("INPUT SETTINGS INVALID".to_owned());
+                eprintln!("Ignoring invalid input settings: {error}");
             }
         },
         Ok(None) => {}
@@ -293,7 +297,8 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<RunOutcome, Box
     let mut last_write = Instant::now();
     let mut revision = session.machine().save_revision();
     while running {
-        let gamepad_poll = gamepad.poll();
+        let controller_capture_at_frame_start = menu.is_capturing_controller();
+        let gamepad_poll = gamepad.poll(&gamepad_bindings);
         if gamepad_poll.menu_pressed && !menu_open {
             menu = MenuState::default();
             if let Some(warning) = settings_warning.take() {
@@ -330,7 +335,7 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<RunOutcome, Box
                         continue;
                     }
                     if menu_open {
-                        let command = menu.handle_key(symbol, &mut bindings);
+                        let command = menu.handle_key(symbol, &mut bindings, &mut gamepad_bindings);
                         handle_menu_command(
                             MenuRuntime {
                                 connection: &connection,
@@ -341,6 +346,7 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<RunOutcome, Box
                                 session,
                                 audio: &mut audio,
                                 gamepad: &mut gamepad,
+                                gamepad_bindings: &mut gamepad_bindings,
                                 menu: &mut menu,
                                 bindings: &mut bindings,
                                 menu_open: &mut menu_open,
@@ -448,12 +454,9 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<RunOutcome, Box
                 _ => {}
             }
         }
-        if menu_open && running {
-            for action in gamepad_poll.pressed_actions.iter().copied() {
-                if gamepad_poll.menu_pressed && matches!(action, Action::Start | Action::Select) {
-                    continue;
-                }
-                let command = menu.handle_gamepad_action(action, &mut bindings);
+        if menu_open && running && controller_capture_at_frame_start {
+            if let Some(control) = gamepad_poll.pressed_controls.first().copied() {
+                let command = menu.handle_gamepad_control(control, &mut gamepad_bindings);
                 handle_menu_command(
                     MenuRuntime {
                         connection: &connection,
@@ -464,6 +467,39 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<RunOutcome, Box
                         session,
                         audio: &mut audio,
                         gamepad: &mut gamepad,
+                        gamepad_bindings: &mut gamepad_bindings,
+                        menu: &mut menu,
+                        bindings: &mut bindings,
+                        menu_open: &mut menu_open,
+                        held: &mut held,
+                        state_notice: &mut state_notice,
+                        settings_warning: &mut settings_warning,
+                        paused,
+                        revision: &mut revision,
+                        running: &mut running,
+                        return_to_library: &mut return_to_library,
+                    },
+                    command,
+                )?;
+            }
+        } else if menu_open && running {
+            for action in gamepad_poll.pressed_actions.iter().copied() {
+                if gamepad_poll.menu_pressed && matches!(action, Action::Start | Action::Select) {
+                    continue;
+                }
+                let command =
+                    menu.handle_gamepad_action(action, &mut bindings, &mut gamepad_bindings);
+                handle_menu_command(
+                    MenuRuntime {
+                        connection: &connection,
+                        window,
+                        protocols,
+                        delete,
+                        title: &title,
+                        session,
+                        audio: &mut audio,
+                        gamepad: &mut gamepad,
+                        gamepad_bindings: &mut gamepad_bindings,
                         menu: &mut menu,
                         bindings: &mut bindings,
                         menu_open: &mut menu_open,
@@ -507,7 +543,7 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<RunOutcome, Box
         }
         let presentation_started = Instant::now();
         let overlay = if menu_open {
-            Some(menu.render(session.machine().screen(), &bindings))
+            Some(menu.render(session.machine().screen(), &bindings, &gamepad_bindings))
         } else if paused {
             Some(overlay::paused(session.machine().screen()))
         } else {
@@ -666,6 +702,7 @@ struct MenuRuntime<'a> {
     session: &'a mut Session,
     audio: &'a mut Option<AudioOutput>,
     gamepad: &'a mut crate::gamepad::GamepadInput,
+    gamepad_bindings: &'a mut crate::gamepad::GamepadBindings,
     menu: &'a mut MenuState,
     bindings: &'a mut KeyBindings,
     menu_open: &'a mut bool,
@@ -738,10 +775,9 @@ fn handle_menu_command(runtime: MenuRuntime<'_>, command: Command) -> Result<(),
                 eprintln!("Save-state load failed: {error}");
             }
         },
-        Command::SettingsChanged => match runtime
-            .session
-            .write_settings(runtime.bindings.encode().as_bytes())
-        {
+        Command::SettingsChanged => match runtime.session.write_settings(
+            crate::gamepad::encode_settings(runtime.bindings, runtime.gamepad_bindings).as_bytes(),
+        ) {
             Ok(()) => {
                 runtime.menu.set_status("SETTINGS SAVED");
                 *runtime.settings_warning = None;

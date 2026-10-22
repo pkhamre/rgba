@@ -38,8 +38,9 @@ Implemented:
 - ROM-specific key remapping for all GBA and emulator actions, duplicate-key
   rejection, settings persistence, and F6/F7 quick state hotkeys. Defaults keep
   existing controls; Escape now opens the menu instead of quitting.
-- Linux evdev gamepad input with automatic discovery/hotplug, D-pad and left-stick
-  movement, standard face/shoulder mappings, and Start + Select to open the menu.
+- Linux evdev gamepad input with automatic discovery/hotplug, configurable
+  per-game controller bindings in a separate PAD KEYBINDS menu page, plus D-pad and
+  left-stick defaults and Start + Select to open the menu.
 - Visible host-only PAUSED panel and title indicator; guest pixels/state are
   not modified. Paused window stability is tested under Xvfb.
 - Clocked square/sweep/envelope, wave/noise PSG, real timer-fed Direct Sound
@@ -70,7 +71,10 @@ Implemented:
   fixed the 600-frame repeat. The latest build passed a separate 6,000-frame
   desktop repeat: 3,291,750 PCM frames, zero drops, pause checks and save intact.
   Do not attribute the older long run to the newer buffer configuration.
-- Gamepad mappings, stick deadzone, and menu navigation have unit coverage. This
+- Gamepad defaults, binding capture/duplicates, settings persistence and legacy
+  keyboard-settings loading, stick deadzone, and menu navigation have unit
+  coverage. The updated menu also passed the 6,000-frame Xvfb desktop check at
+  scale 1 with audio off; that run did not exercise controller capture. This
   environment has no `/dev/input`, so physical 8BitDo USB operation remains
   unverified and should be checked on the user's machine.
 

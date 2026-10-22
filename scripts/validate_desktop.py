@@ -256,7 +256,7 @@ def validate(args):
             if not display.window:raise RuntimeError("exit-test window did not map")
             display.tap(0x6d)
             if b"OPTIONS" not in display.title():raise AssertionError("saved menu binding did not reload")
-            for _ in range(4):display.tap(0xff54)
+            for _ in range(5):display.tap(0xff54)
             display.key(0xff0d,True);display.key(0xff0d,False)
             try:exit_status=exit_process.wait(timeout=10)
             except subprocess.TimeoutExpired as error:raise AssertionError("explicit Exit did not close the window") from error

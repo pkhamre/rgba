@@ -38,8 +38,11 @@ newly connected pads are detected while it is running. The D-pad and left stick
 control movement; the bottom face button maps to GBA A, the right face button
 to B, and the left/right shoulder buttons to L/R. Start + Select opens the
 options menu; use the D-pad to navigate, A/Start to select, and B to go back.
-The current implementation requires read access to the controller's
-`/dev/input/event*` device.
+Choose **PAD KEYBINDS** to select a GBA action and press the controller button or
+move the stick/D-pad to assign it; Escape cancels, and Reset Defaults restores
+the original layout. Keyboard bindings remain separate. The current
+implementation requires read access to the controller's `/dev/input/event*`
+device.
 
 Saves and states are stored under `$XDG_DATA_HOME/rgba` (default
 `~/.local/share/rgba`); settings are under `$XDG_CONFIG_HOME/rgba` (default
