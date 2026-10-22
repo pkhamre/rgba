@@ -50,6 +50,7 @@ instruction budget without reaching it returns failure. `--help` needs no assets
 - [docs/TESTING.md](docs/TESTING.md): reproducible checks and reference comparisons.
 - [docs/STYLE.md](docs/STYLE.md): Google Rust style policy.
 - [docs/CPU_RESEARCH.md](docs/CPU_RESEARCH.md): CPU fixes, evidence, and reference-model disagreements.
+- [docs/UPSTREAM_CPU_TESTS.md](docs/UPSTREAM_CPU_TESTS.md): isolated mGBA CPU-table replay (235 passing cases).
 
 The multiply carry calculation is an attributed adaptation of a published
 hardware-research model, not an emulator backend. Its zlib notice and the MIT

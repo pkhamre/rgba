@@ -1016,3 +1016,7 @@ mod tests;
 #[cfg(test)]
 #[path = "cpu_external_tests.rs"]
 mod external_tests;
+
+#[cfg(test)]
+#[path = "cpu_upstream_tests.rs"]
+mod upstream_tests;

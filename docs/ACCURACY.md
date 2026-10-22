@@ -89,6 +89,8 @@ On the original 41-group scope, 78,981 cases fail versus the prior 88,312.
 The larger total includes newly enabled groups; see CPU_RESEARCH.md rather than
 interpreting these counts as a hardware-compatibility percentage.
 
-No hardware test ROM or mGBA differential run has been completed. BIOS execution
-has not reached the cartridge entry point. Gameplay, rendering, audio, and
+The isolated mGBA suite baseline passes 235 cases (carry/shifter/multiply-long);
+see UPSTREAM_CPU_TESTS.md for source provenance and limitations. No complete
+hardware test ROM, mGBA-emulator differential run, or fresh physical capture
+has been completed. BIOS execution has not reached the cartridge entry point. Gameplay, rendering, audio, and
 sustained real-time performance are unverified.

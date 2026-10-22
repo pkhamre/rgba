@@ -63,7 +63,7 @@ The test instruction is relocated to `0x08000100`, and upstream ADDR expressions
 refer to that instruction's PC+8. There is no general-purpose C compiler or
 assembler here, and the original binary/UI/wrappers are not being executed.
 
-The planned isolated runner uses a three-instruction program:
+The test-only Rust runner uses a three-instruction program:
 
 1. At `0x080000fc`: `MSR CPSR_f, r12`, with r12 holding the requested flags.
 2. At `0x08000100`: the selected instruction, with r0/r1 inputs loaded.
@@ -78,6 +78,29 @@ address zero.
 
 ## Status
 
-Data acquisition/lowering and seven asset-free adapter tests are implemented.
-The Rust execution runner is the next separate implementation step. Full-ROM,
-peripheral, bus-contention, and physical-hardware validation remain open.
+Data preparation and Rust replay are implemented. All **235/235 isolated cases
+pass** (542 expected register/status values), with the same results in debug and
+release. Seven asset-free adapter tests and four asset-free Rust harness tests
+cover parsing, encodings, missing/duplicate cases, wrong results/flags, loops,
+and exception detection.
+
+```sh
+python3 scripts/fetch_mgba_cpu_cases.py
+sh scripts/cargo.sh test -p gba-core mgba_cpu_baselines -- --ignored --nocapture
+sh scripts/cargo.sh test -p gba-core --release mgba_cpu_baselines -- --ignored --nocapture
+```
+
+For one zero-based case, set both group and index:
+
+```sh
+GBA_SUITE_GROUP=shifter GBA_SUITE_CASE_INDEX=45 \
+  sh scripts/cargo.sh test -p gba-core mgba_cpu_baselines -- --ignored --nocapture
+```
+
+Groups are exactly `carry`, `shifter`, and `multiply-long`. A group alone runs all
+its cases. The full fixture must contain every pinned case even when selecting
+a subset; malformed data, invalid selections, and any mismatch fail the run.
+
+Passing this subset does not waive the separate SingleStepTests discrepancies.
+Full-ROM, timing, accumulating multiply, peripherals, bus contention, BIOS boot,
+and fresh physical-hardware validation remain open.

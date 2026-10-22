@@ -10,8 +10,8 @@ sh scripts/check.sh
 sh scripts/cargo.sh test --workspace --release
 ```
 
-Current standard result: **84 Rust unit/integration tests, one doctest, and six
-Python tool tests pass**. One ignored optional test requires reference assets.
+Current standard result: **88 Rust unit/integration tests, one doctest, and 13
+Python tool tests pass**. Two ignored optional tests require reference assets.
 The standard tests use synthetic data only; CI needs no BIOS/game/test ROM.
 
 ## Optional strict CPU reference comparison
@@ -81,6 +81,19 @@ Choose a new report filename on each run.
 Classification identifies first-diagnostic patterns, not every possible issue
 in a case. Current full logs/TSV/triage are under ignored
 `artifacts/cpu-validation-fixed-access.*` and `artifacts/cpu-triage-fixed-access.json`.
+
+## Independent mGBA CPU-table baselines
+
+```sh
+python3 scripts/fetch_mgba_cpu_cases.py
+sh scripts/cargo.sh test -p gba-core mgba_cpu_baselines -- --ignored --nocapture
+```
+
+All 235 isolated carry/shifter/multiply-long cases pass. This is a table-driven
+CPU replay, not execution of the complete suite ROM or new physical-GBA capture.
+[UPSTREAM_CPU_TESTS.md](UPSTREAM_CPU_TESTS.md) documents pinned sources, license,
+lowering, bounded completion, coverage, and group/case selection. These results
+do not replace or suppress strict reference-vector failures.
 
 ## BIOS diagnostic
 

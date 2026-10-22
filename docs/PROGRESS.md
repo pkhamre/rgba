@@ -31,10 +31,17 @@ Latest completed validation work:
   and asset-free tests for classification/inspection tooling.
 - Categorized every current first diagnostic without suppressing any failures.
 
-Standard checks: 84 Rust unit/integration tests + one doctest + six Python tests
+Standard checks: 88 Rust unit/integration tests + one doctest + 13 Python tests
 pass. Full strict comparison: 2,121,019 matches / 128,981 failures; 27 of 45
 groups match completely. On the original scope there are 9,331 fewer failures.
 See CPU_RESEARCH.md for sources, exact categories, and limitations.
+
+An additional independent baseline now replays 235 mGBA suite carry, shifter,
+and multiply-long cases, all passing. Preparation verifies pinned MIT-licensed
+source blobs and retains the license. The test-only runner checks full flags,
+output registers, and exact bounded completion without changing the normal
+BIOS reset path. See UPSTREAM_CPU_TESTS.md. This is not the full ROM or a new
+physical-console capture.
 
 The CPU/bus milestone is not accepted as hardware-accurate. Classified first
 diagnostics do not prove complete correctness or resolve physical reserved-opcode
@@ -42,9 +49,10 @@ behavior. The supplied BIOS still stops after four instructions at POSTFLG.
 
 ## Next work
 
-1. Acquire/verify hardware-derived CPU and bus tests, with licensing and a
-   headless result protocol. Investigate documented/reference disagreements;
-   do not change aligned PC behavior just to match internal reference snapshots.
+1. Expand the independent baseline to memory/bus behavior and full-ROM tests,
+   with licensing and explicit completion. Establish physical evidence for
+   documented/reference disagreements; do not change aligned PC behavior just
+   to match internal reference snapshots.
 2. Audit full transactions beyond first failures: code/data/lock signals,
    internal-cycle placement, BIOS latch, open bus, and GamePak prefetch.
 3. Expand early-termination multiply coverage and exception timing validation.
