@@ -17,6 +17,7 @@ enum FlashPhase {
 pub(crate) struct Cartridge {
     pub(crate) save: Vec<u8>,
     pub(crate) dirty: bool,
+    pub(crate) revision: u64,
     flash: bool,
     bank: usize,
     identification: bool,
@@ -53,6 +54,7 @@ impl Cartridge {
                 }
             ],
             dirty: false,
+            revision: 0,
             flash,
             bank: 0,
             identification: false,
@@ -109,6 +111,7 @@ impl Cartridge {
             if self.save[index] != value {
                 self.save[index] = value;
                 self.dirty = true;
+                self.revision += 1;
             }
             return;
         }
@@ -116,6 +119,7 @@ impl Cartridge {
             let index = self.bank * 0x10000 + offset;
             self.save[index] &= value;
             self.dirty = true;
+            self.revision += 1;
             self.phase = FlashPhase::Ready;
             return;
         }
@@ -152,10 +156,12 @@ impl Cartridge {
                 if offset == 0x5555 && value == 0x10 {
                     self.save.fill(0xff);
                     self.dirty = true;
+                    self.revision += 1;
                 } else if value == 0x30 {
                     let start = self.bank * 0x10000 + (offset & !0xfff);
                     self.save[start..start + 0x1000].fill(0xff);
                     self.dirty = true;
+                    self.revision += 1;
                 }
                 FlashPhase::Ready
             }
@@ -344,6 +350,7 @@ mod tests {
     fn flash_id_banking_programming_and_sector_erase() {
         let mut cart = Cartridge::new(b"FLASH1M_V103");
         command(&mut cart, 0x90);
+        assert_eq!(cart.revision, 0, "ID commands do not change save data");
         assert_eq!((cart.read_backup(0), cart.read_backup(1)), (0xc2, 9));
         command(&mut cart, 0xf0);
         command(&mut cart, 0xb0);
@@ -351,6 +358,7 @@ mod tests {
         command(&mut cart, 0xa0);
         cart.write_backup(0x1234, 0x42);
         assert_eq!(cart.read_backup(0x1234), 0x42);
+        assert_eq!(cart.revision, 1, "Flash program changes revision");
         command(&mut cart, 0xb0);
         cart.write_backup(0, 0);
         assert_eq!(cart.read_backup(0x1234), 0xff);
@@ -362,5 +370,9 @@ mod tests {
         cart.write_backup(0x1000, 0x30);
         assert_eq!(cart.read_backup(0x1234), 0xff);
         assert!(cart.dirty);
+        assert_eq!(cart.revision, 2, "sector erase changes revision");
+        command(&mut cart, 0x80);
+        command(&mut cart, 0x10);
+        assert_eq!(cart.revision, 3, "chip erase changes revision");
     }
 }

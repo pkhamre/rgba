@@ -6,6 +6,9 @@ The supplied BIOS reaches cartridge entry at PC 08000000 without bypassing boot.
 Flash probing now works, and the supplied game renders its Game Freak intro.
 Banked 128 KiB Flash, chip ID, erase/program commands, GPIO RTC reads/control,
 and atomic sidecar saves are implemented. Desktop integration is next.
+Save writes expose a monotonic revision counter so the frontend can wait for a
+quiet period before autosaving. Save, backup, and temporary paths are checked
+against both input images, with synthetic alias and revision regressions.
 
 Headless frame mode is available with `--frames N --screenshot output.ppm`.
 Input can be scripted with `--input FRAME:start` and `--input FRAME:none`.

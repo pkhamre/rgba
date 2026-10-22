@@ -58,6 +58,12 @@ impl Machine {
         self.bus.cartridge.dirty
     }
 
+    /// Monotonic cartridge-write counter for quiet-period save scheduling.
+    #[must_use]
+    pub fn save_revision(&self) -> u64 {
+        self.bus.cartridge.revision
+    }
+
     /// Called by the frontend only after a successful atomic save.
     pub fn mark_save_clean(&mut self) {
         self.bus.cartridge.dirty = false;

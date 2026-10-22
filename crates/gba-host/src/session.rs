@@ -34,14 +34,23 @@ impl Session {
         let save_path = save_path
             .map(Path::to_owned)
             .unwrap_or_else(|| rom_path.with_extension("sav"));
-        if let Ok(canonical) = save_path.canonicalize()
-            && (canonical == bios_path.canonicalize()? || canonical == rom_path.canonicalize()?)
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "save path must not overwrite BIOS or ROM",
-            )
-            .into());
+        let bios_canonical = bios_path.canonicalize()?;
+        let rom_canonical = rom_path.canonicalize()?;
+        for candidate in [
+            save_path.clone(),
+            sidecar(&save_path, ".bak"),
+            sidecar(&save_path, ".tmp"),
+            sidecar(&save_path, ".bak.tmp"),
+        ] {
+            if let Ok(canonical) = candidate.canonicalize()
+                && (canonical == bios_canonical || canonical == rom_canonical)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "save and sidecar paths must not overwrite BIOS or ROM",
+                )
+                .into());
+            }
         }
         match fs::read(&save_path) {
             Ok(bytes) => machine.load_save(&bytes)?,
@@ -186,6 +195,7 @@ mod tests {
     fn cartridge_save_round_trip_and_backup() {
         let assets = Assets::new();
         let mut session = assets.session();
+        assert_eq!(session.machine().save_revision(), 0);
         for _ in 0..3 {
             session
                 .machine_mut()
@@ -193,7 +203,13 @@ mod tests {
                 .expect("write SRAM through CPU");
         }
         assert_eq!(session.machine().save_data()[0], 42);
+        assert_eq!(session.machine().save_revision(), 1);
         assert!(session.flush_save().expect("atomic first save"));
+        assert_eq!(
+            session.machine().save_revision(),
+            1,
+            "flushing is not a guest write"
+        );
         assert!(!session.flush_save().expect("clean save does not rewrite"));
         let bytes = fs::read(session.save_path()).expect("on-disk backup");
         let restored = assets.session();
@@ -233,6 +249,24 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn backup_and_temporary_paths_cannot_alias_rom_inputs() {
+        let assets = Assets::new();
+        let save = assets.directory.join("protected.sav");
+        for suffix in [".bak", ".tmp", ".bak.tmp"] {
+            let protected = super::sidecar(&save, suffix);
+            fs::copy(assets.directory.join("game.gba"), &protected).expect("ROM fixture");
+            let before = fs::read(&protected).expect("original ROM");
+            assert!(
+                Session::try_new(&assets.directory.join("bios.bin"), &protected, Some(&save))
+                    .is_err_and(|error| error.to_string().contains("must not overwrite")),
+                "sidecar alias must be rejected"
+            );
+            assert_eq!(fs::read(&protected).expect("protected ROM"), before);
+            fs::remove_file(protected).expect("remove fixture");
+        }
     }
 
     #[test]
