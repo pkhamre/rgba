@@ -4,6 +4,7 @@
 //! incomplete; see the repository's accuracy ledger before interpreting results.
 
 mod alu;
+mod apu;
 mod bus;
 mod cartridge;
 mod cpu;
@@ -16,6 +17,7 @@ mod ppu;
 mod processor_status;
 mod step_trace;
 
+pub use apu::AUDIO_SAMPLE_RATE;
 pub use bus::{AccessKind, AccessWidth, Bus};
 pub use cpu::Cpu;
 pub use cpu_bus::CpuBus;

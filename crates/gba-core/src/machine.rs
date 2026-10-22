@@ -46,6 +46,24 @@ impl Machine {
         &self.bus.ppu.pixels
     }
 
+    /// Drains stereo signed-16 PCM frames at AUDIO_SAMPLE_RATE (left, right).
+    /// The core retains at most half a second; slow consumers discard oldest data.
+    pub fn take_audio(&mut self) -> Vec<[i16; 2]> {
+        self.bus.hardware.apu.take_samples()
+    }
+
+    /// Total PCM frames generated since reset, including discarded output.
+    #[must_use]
+    pub fn audio_frames(&self) -> u64 {
+        self.bus.hardware.apu.generated
+    }
+
+    /// PCM frames discarded because a frontend did not drain the bounded queue.
+    #[must_use]
+    pub fn audio_dropped(&self) -> u64 {
+        self.bus.hardware.apu.dropped
+    }
+
     /// Cartridge backup bytes (Flash or SRAM), not an emulator save state.
     #[must_use]
     pub fn save_data(&self) -> &[u8] {

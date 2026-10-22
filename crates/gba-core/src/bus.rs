@@ -290,6 +290,9 @@ impl Bus {
             self.clocks += step;
             self.cartridge.advance(step);
             self.hardware.advance_timers(step);
+            self.hardware
+                .apu
+                .advance(step, &mut self.hardware.registers);
             self.hardware.line_clock += step as u16;
             if self.hardware.line_clock == 960 && self.hardware.line < 160 {
                 self.ppu.render_line(

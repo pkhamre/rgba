@@ -25,7 +25,7 @@ pub(crate) struct Hardware {
     pub(crate) line: u16,
     pub(crate) line_clock: u16,
     pub(crate) frames: u64,
-    fifo_level: [u32; 2],
+    pub(crate) apu: crate::apu::Apu,
 }
 
 impl Default for Hardware {
@@ -38,7 +38,7 @@ impl Default for Hardware {
             line: 0,
             line_clock: 0,
             frames: 0,
-            fifo_level: [0; 2],
+            apu: crate::apu::Apu::default(),
         };
         hardware.set_half(0, 0x0080);
         hardware.set_half(0x88, 0x0200);
@@ -104,7 +104,7 @@ impl Hardware {
             let remaining = (0x10000 - u64::from(timer.counter)) * divisor - timer.phase;
             next = next.min(remaining.max(1));
         }
-        next.max(1)
+        next.min(self.apu.next_sample()).max(1)
     }
 
     pub(crate) fn advance_timers(&mut self, cycles: u64) {
@@ -142,9 +142,8 @@ impl Hardware {
                 for fifo in 0..2 {
                     let selector = if fifo == 0 { 10 } else { 14 };
                     if usize::from((self.half(0x82) >> selector) & 1) == index {
-                        self.fifo_level[fifo] =
-                            self.fifo_level[fifo].saturating_sub(overflow as u32);
-                        if self.fifo_level[fifo] <= 16 {
+                        self.apu.clock_fifo(fifo, overflow);
+                        if self.apu.fifo_len(fifo) <= 16 {
                             for channel in 1..=2 {
                                 let control = self.half(0xba + channel * 12);
                                 if control & 0xb000 == 0xb000
@@ -208,6 +207,9 @@ impl Hardware {
     }
 
     pub(crate) fn read_byte(&self, offset: usize) -> u8 {
+        if (0x60..0xa8).contains(&offset) {
+            return self.apu.read(offset, &self.registers);
+        }
         if (0x100..0x110).contains(&offset) && offset & 3 < 2 {
             return (self.timers[(offset - 0x100) / 4].counter >> ((offset & 1) * 8)) as u8;
         }
@@ -224,6 +226,10 @@ impl Hardware {
     }
 
     pub(crate) fn write_byte(&mut self, offset: usize, value: u8, bios: bool) {
+        if (0x60..0xa8).contains(&offset) {
+            self.apu.write(offset, value, &mut self.registers);
+            return;
+        }
         match offset {
             6 | 7 | 0x130 | 0x131 => return,
             0x202 | 0x203 => {
@@ -269,19 +275,6 @@ impl Hardware {
                 timer.control = u16::from(value & 0xc7);
             }
         }
-        if (0xa0..0xa8).contains(&offset) {
-            let fifo = (offset - 0xa0) / 4;
-            self.fifo_level[fifo] = (self.fifo_level[fifo] + 1).min(32);
-            return;
-        }
-        if offset == 0x83 {
-            if value & 8 != 0 {
-                self.fifo_level[0] = 0;
-            }
-            if value & 0x80 != 0 {
-                self.fifo_level[1] = 0;
-            }
-        }
         let old = self.registers[offset];
         self.registers[offset] = value;
         if (0xbb..0xe0).contains(&offset)
@@ -316,6 +309,26 @@ impl Hardware {
 #[cfg(test)]
 mod tests {
     use super::Hardware;
+
+    #[test]
+    fn selected_timer_consumes_real_fifo_bytes_and_requests_dma() {
+        let mut hw = Hardware::default();
+        hw.write_byte(0x84, 0x80, true);
+        for value in 0..4 {
+            hw.write_byte(0xa0, value, true);
+        }
+        hw.dma[1].destination = 0x0400_00a0;
+        hw.set_half(0xc6, 0xb000);
+        hw.write_byte(0x100, 0xff, true);
+        hw.write_byte(0x101, 0xff, true);
+        hw.write_byte(0x102, 0x80, true);
+        hw.advance_timers(1);
+        assert_eq!(hw.apu.fifo_len(0), 3);
+        assert!(hw.dma[1].pending);
+        hw.write_byte(0x83, 8, true);
+        assert_eq!(hw.apu.fifo_len(0), 0);
+        assert_eq!(hw.read_byte(0x83) & 0x88, 0, "reset bits are strobes");
+    }
 
     #[test]
     fn timer_reload_cascade_and_irq() {
