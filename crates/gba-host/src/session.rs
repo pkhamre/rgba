@@ -5,12 +5,15 @@ use std::fs::OpenOptions;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// A machine and its disk-backed cartridge save. No emulator save states.
+const MAX_SETTINGS_SIZE: usize = 64 * 1024;
+
+/// A machine, disk-backed cartridge save, and ROM-specific state/settings paths.
 #[derive(Debug)]
 pub struct Session {
     machine: Machine,
     save_path: PathBuf,
     state_path: PathBuf,
+    settings_path: PathBuf,
     title: String,
 }
 
@@ -36,6 +39,7 @@ impl Session {
             .map(Path::to_owned)
             .unwrap_or_else(|| rom_path.with_extension("sav"));
         let state_path = rom_path.with_extension("state");
+        let settings_path = rom_path.with_extension("settings");
         let bios_canonical = bios_path.canonicalize()?;
         let rom_canonical = rom_path.canonicalize()?;
         let save_candidates = [
@@ -50,7 +54,12 @@ impl Session {
             sidecar(&state_path, ".bak"),
             sidecar(&state_path, ".bak.tmp"),
         ];
-        for candidate in save_candidates.iter().chain(state_candidates.iter()) {
+        let settings_candidates = [settings_path.clone(), sidecar(&settings_path, ".tmp")];
+        for candidate in save_candidates
+            .iter()
+            .chain(state_candidates.iter())
+            .chain(settings_candidates.iter())
+        {
             if let Ok(canonical) = candidate.canonicalize()
                 && (canonical == bios_canonical || canonical == rom_canonical)
             {
@@ -61,16 +70,23 @@ impl Session {
                 .into());
             }
         }
-        for state_candidate in &state_candidates {
-            let aliases_save = save_candidates
-                .iter()
-                .any(|candidate| paths_alias(state_candidate, candidate));
-            if aliases_save {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "save-state path and sidecars must not alias cartridge-save paths",
-                )
-                .into());
+        let persistent_paths = [
+            &save_candidates[..],
+            &state_candidates[..],
+            &settings_candidates[..],
+        ];
+        for (index, current) in persistent_paths.iter().enumerate() {
+            for other in persistent_paths.iter().skip(index + 1) {
+                if current
+                    .iter()
+                    .any(|left| other.iter().any(|right| paths_alias(left, right)))
+                {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "cartridge-save, state, and settings paths must not alias",
+                    )
+                    .into());
+                }
             }
         }
         match fs::read(&save_path) {
@@ -91,6 +107,7 @@ impl Session {
             machine,
             save_path,
             state_path,
+            settings_path,
             title,
         })
     }
@@ -123,6 +140,39 @@ impl Session {
     #[must_use]
     pub fn state_path(&self) -> &Path {
         &self.state_path
+    }
+
+    /// Location of the ROM-specific keybindings settings file.
+    #[must_use]
+    pub fn settings_path(&self) -> &Path {
+        &self.settings_path
+    }
+
+    /// Reads the bounded ROM-specific settings file, or returns `None` if absent.
+    pub fn read_settings(&self) -> Result<Option<Vec<u8>>, io::Error> {
+        let length = match fs::metadata(&self.settings_path) {
+            Ok(metadata) => metadata.len(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        if length > MAX_SETTINGS_SIZE as u64 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "settings file exceeds size limit",
+            ));
+        }
+        fs::read(&self.settings_path).map(Some)
+    }
+
+    /// Atomically writes ROM-specific frontend settings.
+    pub fn write_settings(&self, bytes: &[u8]) -> Result<(), io::Error> {
+        if bytes.len() > MAX_SETTINGS_SIZE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "settings file exceeds size limit",
+            ));
+        }
+        atomic_write(&self.settings_path, bytes)
     }
 
     /// Atomically writes the current complete machine state to the quick slot.
@@ -303,6 +353,24 @@ mod tests {
         assert_eq!(
             fs::read(assets.directory.join("game.sav.bak")).expect("backup"),
             bytes
+        );
+    }
+
+    #[test]
+    fn settings_are_rom_specific_and_written_atomically() {
+        let assets = Assets::new();
+        let session = assets.session();
+        assert_eq!(session.read_settings().expect("settings read"), None);
+        session
+            .write_settings(b"keys-v1\n")
+            .expect("settings write");
+        assert_eq!(
+            session.read_settings().expect("settings read"),
+            Some(b"keys-v1\n".to_vec())
+        );
+        assert_eq!(
+            session.settings_path(),
+            assets.directory.join("game.settings")
         );
     }
 

@@ -6,7 +6,7 @@ Pinned Rust workspace, Google Rust style, safe-Rust/public-doc lints, synthetic
 CI checks, licensed reference preparation, and small logical commits are in
 place. Local debug/release checks pass; GitHub Actions was not run here.
 
-Standard result: **145 Rust unit/integration tests, one doctest, 23 Python
+Standard result: **146 Rust unit/integration tests, one doctest, 23 Python
 tests pass**. Both external tests remain optional/ignored by default.
 The isolated mGBA baseline passes 235/235 cases. Strict CPU comparison still
 fails unchanged: **2,124,072 matches / 125,928 failures** out of 2,250,000,
@@ -91,5 +91,6 @@ progress. Core save states have a versioned/checksummed format, SHA-256 ROM
 binding, full mutable-machine snapshots, and deterministic round-trip/corruption
 tests. Core save states are integrated into `Session` with an adjacent `.state` slot,
 atomic writes, bounded file reads, and transactional `.sav` synchronization with
-`.bak` retention on restore. Desktop menu controls, configurable bindings/settings,
-and speed selection are not yet implemented.
+`.bak` retention on restore. `Session` also provides a bounded, atomic,
+ROM-specific `.settings` file for upcoming frontend keybindings. Desktop menu
+controls, binding capture, and speed selection are not yet implemented.
