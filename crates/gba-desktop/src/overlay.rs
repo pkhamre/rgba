@@ -1,5 +1,24 @@
 //! Host-only overlays; never change the emulated framebuffer.
 
+pub(crate) fn notice(pixels: &[u32], message: &str, success: bool) -> Vec<u32> {
+    let mut output = pixels.to_vec();
+    let width = message.chars().count() * 6 + 16;
+    let left = (240 - width) / 2;
+    let (top, bottom) = (8, 29);
+    let border = if success { 0x70e090 } else { 0xff7070 };
+    for y in top..=bottom {
+        for x in left..left + width {
+            output[y * 240 + x] = if y == top || y == bottom || x == left || x == left + width - 1 {
+                border
+            } else {
+                0x101820
+            };
+        }
+    }
+    crate::menu::draw_text(&mut output, left + 8, top + 7, message, border);
+    output
+}
+
 pub(crate) fn paused(pixels: &[u32]) -> Vec<u32> {
     let mut output = pixels.to_vec();
     for y in 68..91 {
@@ -34,6 +53,17 @@ pub(crate) fn paused(pixels: &[u32]) -> Vec<u32> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn state_notice_is_host_only_and_uses_success_and_failure_colors() {
+        let original = vec![0x123456; 240 * 160];
+        let success = super::notice(&original, "STATE SAVED", true);
+        let failure = super::notice(&original, "LOAD FAILED", false);
+        assert_eq!(original[8 * 240 + 79], 0x123456);
+        assert_eq!(success[8 * 240 + 79], 0x70e090);
+        assert_eq!(failure[8 * 240 + 79], 0xff7070);
+        assert_eq!(success[0], original[0]);
+    }
+
     #[test]
     fn paused_label_does_not_modify_guest_pixels() {
         let original = vec![0x123456; 240 * 160];

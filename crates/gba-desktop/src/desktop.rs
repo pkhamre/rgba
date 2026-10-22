@@ -209,7 +209,7 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
     }
     let mut menu = crate::menu::MenuState::default();
     let mut menu_open = false;
-    let mut speed = 1u8;
+    let mut state_notice = None;
     let mut held = [false; 256];
     let mut paused = false;
     let mut fast = false;
@@ -252,7 +252,7 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
                         continue;
                     }
                     if menu_open {
-                        let command = menu.handle_key(symbol, &mut bindings, speed);
+                        let command = menu.handle_key(symbol, &mut bindings);
                         match command {
                             crate::menu::Command::None => {}
                             crate::menu::Command::Resume => {
@@ -278,16 +278,19 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
                             crate::menu::Command::SaveState => match session.save_state() {
                                 Ok(()) => {
                                     menu.set_status("STATE SAVED");
+                                    set_state_notice(&mut state_notice, "STATE SAVED", true);
                                     eprintln!("Save state: {}", session.state_path().display());
                                 }
                                 Err(error) => {
                                     menu.set_status("STATE SAVE FAILED");
+                                    set_state_notice(&mut state_notice, "SAVE FAILED", false);
                                     eprintln!("Save-state write failed: {error}");
                                 }
                             },
                             crate::menu::Command::LoadState => match session.load_state() {
                                 Ok(()) => {
                                     menu.set_status("STATE LOADED");
+                                    set_state_notice(&mut state_notice, "STATE LOADED", true);
                                     if let Some(output) = &mut audio {
                                         output.reset_after_state_load();
                                     }
@@ -296,14 +299,10 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
                                 }
                                 Err(error) => {
                                     menu.set_status("STATE LOAD FAILED");
+                                    set_state_notice(&mut state_notice, "LOAD FAILED", false);
                                     eprintln!("Save-state load failed: {error}");
                                 }
                             },
-                            crate::menu::Command::SpeedChanged(selected) => {
-                                speed = selected;
-                                next_frame = Instant::now();
-                                menu.set_status(format!("SPEED {speed}X"));
-                            }
                             crate::menu::Command::SettingsChanged => {
                                 match session.write_settings(bindings.encode().as_bytes()) {
                                     Ok(()) => {
@@ -371,10 +370,13 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
                         }
                         Some(crate::keybindings::Action::SaveState) => match session.save_state() {
                             Ok(()) => {
-                                menu.set_status("STATE SAVED");
+                                set_state_notice(&mut state_notice, "STATE SAVED", true);
                                 eprintln!("Save state: {}", session.state_path().display());
                             }
-                            Err(error) => eprintln!("Save-state write failed: {error}"),
+                            Err(error) => {
+                                set_state_notice(&mut state_notice, "SAVE FAILED", false);
+                                eprintln!("Save-state write failed: {error}");
+                            }
                         },
                         Some(crate::keybindings::Action::Exit) => {
                             if flush_save(session) {
@@ -383,13 +385,17 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
                         }
                         Some(crate::keybindings::Action::LoadState) => match session.load_state() {
                             Ok(()) => {
+                                set_state_notice(&mut state_notice, "STATE LOADED", true);
                                 if let Some(output) = &mut audio {
                                     output.reset_after_state_load();
                                 }
                                 revision = session.machine().save_revision();
                                 eprintln!("Loaded state: {}", session.state_path().display());
                             }
-                            Err(error) => eprintln!("Save-state load failed: {error}"),
+                            Err(error) => {
+                                set_state_notice(&mut state_notice, "LOAD FAILED", false);
+                                eprintln!("Save-state load failed: {error}");
+                            }
                         },
                         _ => {}
                     }
@@ -434,20 +440,25 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
         }
         let samples = session.machine_mut().take_audio();
         if let Some(output) = &mut audio {
-            output.set_muted(paused || menu_open || fast || speed > 1);
+            output.set_muted(paused || menu_open || fast);
             output.submit(samples);
         }
         let presentation_started = Instant::now();
         let overlay = if menu_open {
-            Some(menu.render(session.machine().screen(), &bindings, speed))
+            Some(menu.render(session.machine().screen(), &bindings))
         } else if paused {
             Some(overlay::paused(session.machine().screen()))
         } else {
             None
         };
-        let pixels = overlay
+        let base_pixels = overlay
             .as_deref()
             .unwrap_or_else(|| session.machine().screen());
+        let notice = state_notice
+            .as_ref()
+            .filter(|notice| !menu_open && Instant::now() < notice.expires_at)
+            .map(|notice| overlay::notice(base_pixels, notice.message, notice.success));
+        let pixels = notice.as_deref().unwrap_or(base_pixels);
         if frame_cache.update(pixels) {
             let image = pack_pixels(
                 pixels,
@@ -494,10 +505,9 @@ fn run_window(args: &Arguments, session: &mut Session) -> Result<(), Box<dyn Err
         if fast && !paused && !menu_open {
             next_frame = Instant::now();
         } else {
-            let interval = Duration::from_secs_f64(frame_time.as_secs_f64() / f64::from(speed));
-            next_frame += interval;
+            next_frame += frame_time;
             let now = Instant::now();
-            let hint = if paused || menu_open || speed > 1 {
+            let hint = if paused || menu_open {
                 None
             } else {
                 audio.as_ref().and_then(AudioOutput::needs_samples)
@@ -579,6 +589,20 @@ fn set_window_title(
         )?
         .check()?;
     Ok(())
+}
+
+struct StateNotice {
+    message: &'static str,
+    success: bool,
+    expires_at: Instant,
+}
+
+fn set_state_notice(notice: &mut Option<StateNotice>, message: &'static str, success: bool) {
+    *notice = Some(StateNotice {
+        message,
+        success,
+        expires_at: Instant::now() + Duration::from_secs(2),
+    });
 }
 
 fn flush_save(session: &mut Session) -> bool {

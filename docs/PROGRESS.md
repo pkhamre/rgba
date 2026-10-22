@@ -30,8 +30,9 @@ Implemented:
 - Genuine BIOS boot and SWI execution, without a boot shortcut.
 - Banked Flash/SRAM, GPIO RTC reads/control, atomic saves/backups/alias guards.
 - X11/XWayland presentation, integer scaling, native wall-clock pacing, and
-  an Escape-accessible options menu with explicit Exit, 1×/2×/4× selection,
-  state actions, and a Keybindings/Reset Defaults page.
+  an Escape-accessible options menu with explicit Exit, state actions, and a
+  Keybindings/Reset Defaults page. Brief host-only state-result notices are
+  shown for quick saves and loads.
 - ROM-specific key remapping for all GBA and emulator actions, duplicate-key
   rejection, settings persistence, and F6/F7 quick state hotkeys. Defaults keep
   existing controls; Escape now opens the menu instead of quitting.
@@ -92,13 +93,13 @@ playthrough, and performance on the user's host is not certified.
 The options/state implementation has unit coverage for state encoding, ROM
 binding and corruption rejection; atomic Session slots and cartridge-save sync;
 settings round trips and duplicate rejection; menu navigation/capture; and
-host-only overlays. `scripts/validate_desktop.py` passed its isolated-ROM Xvfb
-acceptance run at scale 3: 6,000 frames / 99.736 emulated seconds in 82.745
-wall seconds. The run exercised menu state save/load/resume, all three speed
-choices and persistence after closing the menu, duplicate-key rejection,
-keybinding persistence/reload, F6/F7, and explicit Exit at frame 4 of a second
-launch. Both isolated cartridge-save checks were unchanged. Audio was disabled;
-this is not audio-device evidence.
+host-only overlays. Selectable speed controls are deferred at the user's
+request; Tab fast-forward remains. The isolated-ROM Xvfb acceptance run passed
+at scale 3: 6,000 frames / 100.222 emulated seconds in 106.919 wall seconds. It
+covered menu state save/load/resume, duplicate-key rejection, keybinding
+persistence/reload, F6/F7 success and failure notices, and explicit Exit at
+frame 4 of a second launch. Both isolated saves were unchanged. Audio was
+disabled, so this is not audio-device evidence.
 
 Next: hardware-backed CPU/bus/device/audio tests, reference captures, real-device
 listening/latency checks, and broader gameplay validation.

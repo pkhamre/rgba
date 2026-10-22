@@ -146,13 +146,12 @@ xvfb-run -a sh scripts/play.sh --scale 1 --frames 120
 ```
 
 A 6,000-frame `scripts/validate_desktop.py` run passed under Xvfb at scale 3
-(99.736 emulated seconds, 82.745 wall seconds). It exercised options state
-save/load/resume, 1×/2×/4× selections and speed persistence after closing the
-menu, duplicate binding rejection, keybinding persistence across launches,
-F6/F7, and explicit Exit. The disposable cartridge save was unchanged on both
-exits. Audio was off; this result does not validate a playback device. A
-separate virtual-X-server run compared captured paused-window RGB bytes against
-the core screenshot.
+(100.222 emulated seconds, 106.919 wall seconds). It exercised options state
+save/load/resume, duplicate binding rejection, keybinding persistence across
+launches, F6/F7 success/failure notices, and explicit Exit. The disposable
+cartridge save was unchanged on both exits. Audio was off; this result does not
+validate a playback device. A separate virtual-X-server run compared captured
+paused-window RGB bytes against the core screenshot.
 Those local artifacts are ignored (`artifacts/desktop-smoke.json` and
 `artifacts/desktop-xvfb.log`); this is not a physical-display latency test.
 

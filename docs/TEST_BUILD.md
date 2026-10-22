@@ -31,8 +31,9 @@ Space: pause. Hold Tab: fast-forward. F5: flush cartridge save. F6/F7: save/load
 a machine state. F12: screenshot under `artifacts/` (binary PPM, never overwrite).
 Escape opens the options menu; Escape closes it and B backs out one menu level.
 Exit or window close quits and attempts to flush cartridge data. The menu
-selects 1×/2×/4× speed (the selection lasts until the process exits), opens
-keybinding settings, and provides state actions. `game.settings` and `game.state` sidecars are stored next
+opens keybinding settings and provides state actions. Selectable speed controls
+are deferred; Tab fast-forward remains available. State save/load results show a
+brief host-only on-screen notice. `game.settings` and `game.state` sidecars are stored next
 to the ROM; key settings persist across launches. Keybinding capture rejects
 conflicts and includes Reset Defaults. Focus loss releases held keys.
 
@@ -82,8 +83,9 @@ xvfb-run -a sh scripts/play.sh --scale 1 --frames 120
 - Xvfb desktop smoke: window maps, injected F12 produces a screenshot, and
   paused X11 window pixels match the core framebuffer byte-for-byte. The
   6,000-frame `scripts/validate_desktop.py` run passed interactive menu
-  save/load/resume, speed choices, duplicate-key rejection, persistent binding
-  reload, F6/F7, and explicit Exit. It used audio off and an isolated save.
+  save/load/resume, duplicate-key rejection, persistent binding reload, F6/F7
+  success/failure notices, and explicit Exit. It used audio off and an isolated
+  save.
 - A controlled 115,200-frame real-time desktop soak completed in 32 minutes
   19.5 seconds with zero core/host audio queue drops, unchanged save data,
   and stable sampled RSS. This used the earlier audio-buffer limit; the latest

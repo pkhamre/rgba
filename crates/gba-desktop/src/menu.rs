@@ -2,8 +2,7 @@
 
 use crate::keybindings::{Action, BindingError, KeyBindings, key_name};
 
-const SPEEDS: [u8; 3] = [1, 2, 4];
-const OPTIONS: usize = 5;
+const OPTIONS: usize = 4;
 const KEY_ROWS: usize = 7;
 const RESET_INDEX: usize = Action::ALL.len();
 const BACK_INDEX: usize = RESET_INDEX + 1;
@@ -15,7 +14,6 @@ pub(crate) enum Command {
     Exit,
     SaveState,
     LoadState,
-    SpeedChanged(u8),
     SettingsChanged,
 }
 
@@ -45,12 +43,7 @@ impl Default for MenuState {
 }
 
 impl MenuState {
-    pub(crate) fn handle_key(
-        &mut self,
-        symbol: u32,
-        bindings: &mut KeyBindings,
-        speed: u8,
-    ) -> Command {
+    pub(crate) fn handle_key(&mut self, symbol: u32, bindings: &mut KeyBindings) -> Command {
         if let Some(action) = self.capture {
             if symbol == 0xff1b {
                 self.capture = None;
@@ -80,7 +73,7 @@ impl MenuState {
                 Page::Options => return Command::Resume,
                 Page::Keybindings => {
                     self.page = Page::Options;
-                    self.selected = 3;
+                    self.selected = 2;
                     self.status.clear();
                     return Command::None;
                 }
@@ -95,18 +88,6 @@ impl MenuState {
             self.selected = (self.selected + 1) % self.page_length();
             return Command::None;
         }
-        if action == Some(Action::Left) || action == Some(Action::Right) {
-            if self.page == Page::Options && self.selected == 2 {
-                let next = speed_index(speed).wrapping_add(if action == Some(Action::Right) {
-                    1
-                } else {
-                    2
-                }) % SPEEDS.len();
-                self.status.clear();
-                return Command::SpeedChanged(SPEEDS[next]);
-            }
-            return Command::None;
-        }
         if !matches!(action, Some(Action::A | Action::Start)) {
             return Command::None;
         }
@@ -116,10 +97,6 @@ impl MenuState {
                 0 => Command::SaveState,
                 1 => Command::LoadState,
                 2 => {
-                    let next = (speed_index(speed) + 1) % SPEEDS.len();
-                    Command::SpeedChanged(SPEEDS[next])
-                }
-                3 => {
                     self.page = Page::Keybindings;
                     self.selected = 0;
                     Command::None
@@ -149,7 +126,7 @@ impl MenuState {
         self.status = status.into();
     }
 
-    pub(crate) fn render(&self, pixels: &[u32], bindings: &KeyBindings, speed: u8) -> Vec<u32> {
+    pub(crate) fn render(&self, pixels: &[u32], bindings: &KeyBindings) -> Vec<u32> {
         let mut output = pixels.to_vec();
         let (left, top, right, bottom) = (12, 12, 228, 148);
         for y in top..bottom {
@@ -163,7 +140,7 @@ impl MenuState {
             }
         }
         match self.page {
-            Page::Options => self.draw_options(&mut output, speed),
+            Page::Options => self.draw_options(&mut output),
             Page::Keybindings => self.draw_bindings(&mut output, bindings),
         }
         if !self.status.is_empty() {
@@ -179,19 +156,9 @@ impl MenuState {
         }
     }
 
-    fn draw_options(&self, output: &mut [u32], speed: u8) {
+    fn draw_options(&self, output: &mut [u32]) {
         draw_text(output, 82, 22, "OPTIONS", 0x80d8ff);
-        let entries = [
-            "SAVE STATE",
-            "LOAD STATE",
-            match speed {
-                2 => "SPEED: 2X",
-                4 => "SPEED: 4X",
-                _ => "SPEED: 1X",
-            },
-            "KEYBINDS",
-            "EXIT",
-        ];
+        let entries = ["SAVE STATE", "LOAD STATE", "KEYBINDS", "EXIT"];
         for (index, entry) in entries.iter().enumerate() {
             let y = 43 + index * 15;
             draw_text(
@@ -271,14 +238,7 @@ impl MenuState {
     }
 }
 
-fn speed_index(speed: u8) -> usize {
-    SPEEDS
-        .iter()
-        .position(|candidate| *candidate == speed)
-        .unwrap_or(0)
-}
-
-fn draw_text(output: &mut [u32], x: usize, y: usize, text: &str, color: u32) {
+pub(crate) fn draw_text(output: &mut [u32], x: usize, y: usize, text: &str, color: u32) {
     for (character, letter) in text.chars().enumerate() {
         let glyph = glyph(letter);
         for (row, bits) in glyph.iter().enumerate() {
@@ -347,65 +307,41 @@ mod tests {
     use crate::keybindings::{Action, KeyBindings};
 
     #[test]
-    fn menu_selects_options_and_keybinding_page_and_escape_resumes() {
+    fn menu_selects_save_load_and_keybinding_page_then_resumes() {
         let mut menu = MenuState::default();
         let mut bindings = KeyBindings::default();
-        assert_eq!(
-            menu.handle_key(0xff0d, &mut bindings, 1),
-            Command::SaveState
-        );
-        menu.handle_key(0xff54, &mut bindings, 1);
-        assert_eq!(
-            menu.handle_key(0xff0d, &mut bindings, 1),
-            Command::LoadState
-        );
-        menu.handle_key(0xff54, &mut bindings, 1);
-        assert_eq!(
-            menu.handle_key(0xff0d, &mut bindings, 1),
-            Command::SpeedChanged(2)
-        );
-        assert_eq!(
-            menu.handle_key(0xff53, &mut bindings, 2),
-            Command::SpeedChanged(4)
-        );
-        assert_eq!(
-            menu.handle_key(0xff51, &mut bindings, 4),
-            Command::SpeedChanged(2)
-        );
-        assert_eq!(
-            menu.handle_key(0xff51, &mut bindings, 2),
-            Command::SpeedChanged(1)
-        );
-        menu.handle_key(0xff54, &mut bindings, 1);
-        assert_eq!(menu.handle_key(0xff0d, &mut bindings, 1), Command::None);
-        assert_eq!(menu.handle_key(0xff1b, &mut bindings, 1), Command::None);
-        assert_eq!(menu.handle_key(0xff1b, &mut bindings, 1), Command::Resume);
-        assert_ne!(Action::ALL.len(), 0);
+        assert_eq!(menu.handle_key(0xff0d, &mut bindings), Command::SaveState);
+        menu.handle_key(0xff54, &mut bindings);
+        assert_eq!(menu.handle_key(0xff0d, &mut bindings), Command::LoadState);
+        menu.handle_key(0xff54, &mut bindings);
+        assert_eq!(menu.handle_key(0xff0d, &mut bindings), Command::None);
+        assert_eq!(menu.handle_key(0xff1b, &mut bindings), Command::None);
+        assert_eq!(menu.handle_key(0xff1b, &mut bindings), Command::Resume);
     }
 
     #[test]
     fn explicit_exit_is_a_menu_action() {
         let mut menu = MenuState::default();
         let mut bindings = KeyBindings::default();
-        for _ in 0..4 {
-            menu.handle_key(0xff54, &mut bindings, 1);
+        for _ in 0..3 {
+            menu.handle_key(0xff54, &mut bindings);
         }
-        assert_eq!(menu.handle_key(0xff0d, &mut bindings, 1), Command::Exit);
+        assert_eq!(menu.handle_key(0xff0d, &mut bindings), Command::Exit);
     }
 
     #[test]
     fn keybinding_capture_rejects_conflict_and_accepts_new_key() {
         let mut menu = MenuState::default();
         let mut bindings = KeyBindings::default();
-        for _ in 0..3 {
-            menu.handle_key(0xff54, &mut bindings, 1);
+        for _ in 0..2 {
+            menu.handle_key(0xff54, &mut bindings);
         }
-        menu.handle_key(0xff0d, &mut bindings, 1);
-        menu.handle_key(0xff0d, &mut bindings, 1);
-        assert_eq!(menu.handle_key(0x78, &mut bindings, 1), Command::None);
+        menu.handle_key(0xff0d, &mut bindings);
+        menu.handle_key(0xff0d, &mut bindings);
+        assert_eq!(menu.handle_key(0x78, &mut bindings), Command::None);
         assert_eq!(menu.status, "KEY ALREADY USED");
         assert_eq!(
-            menu.handle_key(0xffc5, &mut bindings, 1),
+            menu.handle_key(0xffc5, &mut bindings),
             Command::SettingsChanged
         );
         assert_eq!(bindings.keys(Action::A), [0xffc5, 0]);
@@ -414,7 +350,7 @@ mod tests {
     #[test]
     fn menu_overlay_is_host_only_and_has_the_guest_frame_size() {
         let pixels = vec![0x123456; 240 * 160];
-        let visible = MenuState::default().render(&pixels, &KeyBindings::default(), 1);
+        let visible = MenuState::default().render(&pixels, &KeyBindings::default());
         assert_eq!(visible.len(), pixels.len());
         assert_eq!(pixels[12 * 240 + 12], 0x123456);
         assert_eq!(visible[12 * 240 + 12], 0xffffff);

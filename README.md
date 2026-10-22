@@ -22,7 +22,7 @@ Controls: arrows/WASD = D-pad; Z/X = A/B; Enter = Start; Backspace = Select;
 Q/E = L/R. Space pauses; Tab fast-forwards. F5 flushes the cartridge save,
 F6/F7 save/load a machine state, and F12 captures a PPM screenshot. Escape opens
 the options menu; choose Exit or close the window to quit and flush saves.
-The menu also selects 1×/2×/4× speed and configures bindings.
+The menu configures bindings. State saves and loads show a brief on-screen result notice.
 Hold Tab through boot/intro if desired; use Enter at the title and Z to confirm.
 
 Save data defaults to the ROM's `.sav` file; previous data is kept in

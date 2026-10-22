@@ -44,7 +44,8 @@ proof.
   wrong-ROM inputs are rejected without changing the machine. The host session
   provides an adjacent `.state` quick slot, atomic writes, bounded reads, and
   restore-time atomic cartridge-save synchronization with `.sav.bak` retention.
-  Desktop menu, keybind customization, and speed controls are still pending.
+  Desktop menu and keybind customization are implemented, with state-result
+  notices; selectable speed controls are deferred. Tab fast-forward remains.
 
 ## Renderer optimization regressions
 

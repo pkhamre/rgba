@@ -120,8 +120,8 @@ def artifact_executable(output):
 
 
 def validate(args):
-    def speed_row(image):
-        return b"".join(image[y*240*3+48*3:y*240*3+108*3] for y in range(73,80))
+    def notice_border(image):
+        return image[(8*240+79)*3:(8*240+79)*3+3]
 
     output=args.output.resolve();save_source=args.save.resolve()
     original=save_source.read_bytes()
@@ -165,25 +165,12 @@ def validate(args):
                     if not (output/"game.state").is_file():raise AssertionError("Save State menu action failed")
                     display.tap(0xff54);display.tap(0xff0d);time.sleep(.2)
                     if b"OPTIONS" not in display.title():raise AssertionError("Load State left options menu")
-                    display.tap(0xff54);display.tap(0xff0d)
-                    speed_2=display.snapshot(args.scale)
-                    display.tap(0xff53);speed_4=display.snapshot(args.scale)
-                    display.tap(0xff53);speed_1=display.snapshot(args.scale)
-                    if len({speed_1,speed_2,speed_4})!=3:raise AssertionError("speed menu choices were not distinct")
-                    display.tap(0xff0d);persisted_speed=display.snapshot(args.scale)
-                    display.tap(0xff1b);time.sleep(.2)
-                    display.tap(0xff1b)
-                    display.tap(0xff54);display.tap(0xff54)
-                    reopened_speed=display.snapshot(args.scale)
-                    if speed_row(persisted_speed)!=speed_row(reopened_speed):raise AssertionError("speed choice did not persist after closing the menu")
                     display.tap(0xff1b);time.sleep(.2)
                     if b"OPTIONS" in display.title():raise AssertionError("Escape did not resume gameplay")
                     menu_tested=True;report["options_save_load_resume_tested"]=True
-                    report["speed_options_tested"]=True
-                    report["speed_persists_after_resume"]=True
                 if not bindings_tested and elapsed>=3:
                     display.tap(0xff1b)
-                    for _ in range(3):display.tap(0xff54)
+                    for _ in range(2):display.tap(0xff54)
                     display.tap(0xff0d)
                     for _ in range(12):display.tap(0xff54)
                     display.tap(0xff0d);display.tap(0xffc3)
@@ -195,10 +182,17 @@ def validate(args):
                     if b"OPTIONS" in display.title():raise AssertionError("custom menu binding did not resume gameplay")
                     bindings_tested=True;report["menu_keybinding_persisted"]=True
                 if not state_hotkeys_tested and elapsed>=7:
-                    display.tap(0xffc3);time.sleep(.2)
-                    display.tap(0xffc4);time.sleep(.2)
-                    if not (output/"game.state").is_file():raise AssertionError("state hotkeys failed")
+                    display.tap(0xffc3);time.sleep(.05)
+                    if notice_border(display.snapshot(args.scale))!=bytes([112,224,144]):raise AssertionError("save-state success notice missing")
+                    display.tap(0xffc4);time.sleep(.05)
+                    if notice_border(display.snapshot(args.scale))!=bytes([112,224,144]):raise AssertionError("load-state success notice missing")
+                    state_path=output/"game.state"
+                    if not state_path.is_file():raise AssertionError("state hotkeys failed")
+                    state_path.write_bytes(b"corrupt state")
+                    display.tap(0xffc4);time.sleep(.05)
+                    if notice_border(display.snapshot(args.scale))!=bytes([255,112,112]):raise AssertionError("load-state failure notice missing")
                     state_hotkeys_tested=True;report["state_hotkeys_tested"]=True
+                    report["state_save_load_notices_tested"]=True
                 if elapsed>=74 and not paused:
                     display.tap(0x20);time.sleep(.3)
                     if b"PAUSED" not in display.title():raise AssertionError("pause title missing")
@@ -258,7 +252,7 @@ def validate(args):
             if not display.window:raise RuntimeError("exit-test window did not map")
             display.tap(0x6d)
             if b"OPTIONS" not in display.title():raise AssertionError("saved menu binding did not reload")
-            for _ in range(4):display.tap(0xff54)
+            for _ in range(3):display.tap(0xff54)
             display.key(0xff0d,True);display.key(0xff0d,False)
             try:exit_status=exit_process.wait(timeout=10)
             except subprocess.TimeoutExpired as error:raise AssertionError("explicit Exit did not close the window") from error

@@ -115,10 +115,10 @@ This checkpoint is a proposed concrete definition of “playable,” not a claim
 
 - Escape opens an in-window options menu. Escape from the menu returns to gameplay; an explicit Exit item flushes the cartridge save and quits.
 - Provide one atomic quick-save-state slot beside the ROM. State files are versioned and bound to the loaded ROM; loading validates fully before replacing the running machine.
-- A successful load restores the complete emulated machine and atomically synchronizes its cartridge backup to the configured `.sav`, preserving existing backup behavior. Cartridge saves and emulator states remain separate files.
-- Provide persistent runtime speed selection at 1x, 2x, and 4x; a fresh launch starts at 1x.
+- A successful load restores the complete emulated machine and atomically synchronizes its cartridge backup to the configured `.sav`, preserving existing backup behavior. Cartridge saves and emulator states remain separate files. Show an in-window success/failure notice for state saves and loads.
+- Selectable speed controls are deferred at the user's request. Keep the existing Tab fast-forward behavior.
 - Provide a Keybinds submenu for all GBA buttons and emulator actions, including menu navigation, pause, fast-forward, state save/load, and exit. Persist bindings in a settings file beside the ROM. Reject duplicate bindings with a clear explanation and offer Reset Defaults.
-- Implement/test core state round trips and corrupt/incompatible state rejection before desktop integration. Then add settings persistence, key capture/conflict handling, menu UI, speed pacing, and desktop validation in separate logical steps.
+- Implement/test core state round trips and corrupt/incompatible state rejection before desktop integration. Then add settings persistence, key capture/conflict handling, menu UI, state-result notices, and desktop validation in separate logical steps.
 
 ## Current implementation status
 
@@ -132,11 +132,12 @@ accuracy criteria or the first-release checkpoint. Audio synthesis/playback is
 now implemented provisionally; real game-menu save/Continue cycles pass locally,
 and the first battle succeeded in user testing. A controlled real-time desktop
 soak passed; varied human gameplay/listening and hardware/reference validation
-remain open. The agreed desktop-options follow-up is in implementation: core/host
-state persistence, settings storage, keybinding/menu models, and desktop event-loop
-integration are implemented. Standard checks and the isolated 6,000-frame Xvfb
-interactive acceptance run pass. Physical hardware, varied gameplay, and real-device
-audio validation remain open.
+remain open. The desktop-options follow-up is implemented: core/host state
+persistence, settings storage, keybinding/menu models, state-result notices, and
+desktop event-loop integration. Selectable speed controls are deferred at the
+user's request; Tab fast-forward remains. Standard checks and the isolated
+6,000-frame Xvfb interactive acceptance run pass. Physical hardware, varied
+gameplay, and real-device audio validation remain open.
 
 ## Work policy
 
