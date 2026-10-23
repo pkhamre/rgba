@@ -6,7 +6,7 @@ Pinned Rust workspace, Google Rust style, safe-Rust/public-doc lints, synthetic
 CI checks, licensed reference preparation, and small logical commits are in
 place. Local debug/release checks pass; GitHub Actions was not run here.
 
-Standard result: **174 Rust unit/integration tests, one doctest, and 23 Python
+Standard result: **176 Rust unit/integration tests, one doctest, and 23 Python
 tests pass; 3 Rust tests are ignored**. Both external tests remain optional/ignored by
 default.
 The isolated mGBA baseline passes 235/235 cases. The pinned jsmolka ARM,
@@ -111,9 +111,10 @@ The options/state implementation has unit coverage for state encoding, ROM
 binding and corruption rejection; atomic Session slots and cartridge-save sync;
 settings round trips and duplicate rejection; menu navigation/capture; host-only
 overlays; XDG path discovery, ROM hashing/deduplication, legacy sidecar migration,
-and desktop library switching. Selectable 1x/2x/4x/8x pacing is now available
-in the options menu and persisted per game; audio is muted above 1x, while Tab
-remains temporary unlimited fast-forward. Unit tests cover the choices and
+and desktop library switching. Selectable 1x/2x/4x/8x/16x pacing is available
+in the options menu and persisted per game; accelerated modes play faster,
+higher-pitched audio, while Tab remains temporary unlimited muted fast-forward.
+Unit tests cover the choices and
 settings compatibility. The Xvfb validator now exercises every selection and
 reload, but could not be run here because Xvfb is unavailable; achieved real-host
 rate is also unverified. The earlier isolated-ROM Xvfb acceptance run passed

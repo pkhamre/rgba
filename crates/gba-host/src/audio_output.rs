@@ -25,6 +25,8 @@ pub struct AudioOutput {
     player: Option<Player>,
     remaining: VecDeque<Candidate>,
     muted: bool,
+    speed_multiplier: u32,
+    reducer: SpeedReducer,
     dropped: u64,
     timing: SubmissionTiming,
 }
@@ -97,6 +99,8 @@ impl AudioOutput {
             player: None,
             remaining,
             muted: false,
+            speed_multiplier: 1,
+            reducer: SpeedReducer::default(),
             dropped: 0,
             timing: SubmissionTiming::default(),
         };
@@ -165,15 +169,38 @@ impl AudioOutput {
         self.player.as_ref().map(|player| player.name)
     }
 
-    /// Mutes new packets during pause/fast-forward. Device buffers still drain.
+    /// Mutes new packets during pause or unlimited Tab fast-forward.
+    /// Device buffers still drain.
     pub fn set_muted(&mut self, muted: bool) {
         if self.muted != muted {
             self.timing.reset_gap();
+            self.reducer.reset();
         }
         self.muted = muted;
         if let Some(player) = &self.player {
             player.set_muted(muted);
         }
+    }
+
+    /// Compresses submitted PCM time by this factor, raising pitch with speed.
+    /// Supported factors are 1, 2, 4, 8, and 16. Guest audio synthesis is unchanged.
+    pub fn set_speed(&mut self, multiplier: u32) -> io::Result<()> {
+        if !matches!(multiplier, 1 | 2 | 4 | 8 | 16) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "audio speed must be 1, 2, 4, 8, or 16",
+            ));
+        }
+        if multiplier == self.speed_multiplier {
+            return Ok(());
+        }
+        self.speed_multiplier = multiplier;
+        self.reducer.set_factor(multiplier as usize);
+        self.timing.reset_gap();
+        if let Some(player) = &self.player {
+            player.epoch.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(())
     }
 
     /// Drops stale pre-load PCM from the bounded writer queue and starts a fresh
@@ -182,6 +209,7 @@ impl AudioOutput {
         if let Some(player) = &self.player {
             player.epoch.fetch_add(1, Ordering::Relaxed);
         }
+        self.reducer.reset();
         self.timing.reset_gap();
     }
 
@@ -189,6 +217,7 @@ impl AudioOutput {
     /// At most eight packets of up to 2,048 frames are queued.
     pub fn submit(&mut self, samples: Vec<[i16; 2]>) {
         self.poll();
+        let samples = self.reducer.reduce(samples);
         if self.player.is_some() && !self.muted && !samples.is_empty() && samples.len() <= 2048 {
             self.timing.record(std::time::Instant::now(), samples.len());
         }
@@ -221,6 +250,46 @@ impl AudioOutput {
     #[must_use]
     pub fn dropped(&self) -> u64 {
         self.dropped + self.player.as_ref().map_or(0, |player| player.dropped)
+    }
+}
+
+#[derive(Default)]
+struct SpeedReducer {
+    factor: usize,
+    consumed: usize,
+    sums: [i64; 2],
+}
+
+impl SpeedReducer {
+    fn set_factor(&mut self, factor: usize) {
+        self.factor = factor;
+        self.reset();
+    }
+
+    fn reset(&mut self) {
+        self.consumed = 0;
+        self.sums = [0; 2];
+    }
+
+    fn reduce(&mut self, samples: Vec<[i16; 2]>) -> Vec<[i16; 2]> {
+        let factor = self.factor.max(1);
+        if factor == 1 {
+            return samples;
+        }
+        let mut reduced = Vec::with_capacity((samples.len() + self.consumed) / factor);
+        for frame in samples {
+            self.sums[0] += i64::from(frame[0]);
+            self.sums[1] += i64::from(frame[1]);
+            self.consumed += 1;
+            if self.consumed == factor {
+                reduced.push([
+                    (self.sums[0] / factor as i64) as i16,
+                    (self.sums[1] / factor as i64) as i16,
+                ]);
+                self.reset();
+            }
+        }
+        reduced
     }
 }
 
@@ -403,7 +472,7 @@ impl HighPass {
 
 #[cfg(test)]
 mod tests {
-    use super::{AudioOutput, Candidate};
+    use super::{AudioOutput, Candidate, SpeedReducer};
     use crate::stream_format::StreamFormat;
     use std::fs;
     use std::path::PathBuf;
@@ -469,6 +538,35 @@ mod tests {
             assert!(Instant::now() < deadline, "player did not reach {name:?}");
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn speed_reducer_compresses_time_and_carries_partial_groups_between_packets() {
+        let mut reducer = SpeedReducer::default();
+        reducer.set_factor(2);
+        assert_eq!(
+            reducer.reduce(vec![[100, -100], [300, -300], [500, -500]]),
+            [[200, -200]]
+        );
+        assert_eq!(reducer.reduce(vec![[700, -700]]), [[600, -600]]);
+        for factor in [2, 4, 8, 16] {
+            reducer.set_factor(factor);
+            let output = reducer.reduce(vec![[1600, -1600]; factor * 3]);
+            assert_eq!(output, vec![[1600, -1600]; 3], "factor={factor}");
+        }
+    }
+
+    #[test]
+    fn audio_speed_rejects_unsupported_factors_and_keeps_tab_mute_independent() {
+        let mut output = single(Command::new("cat")).expect("audio sink");
+        assert!(output.set_speed(3).is_err());
+        output.set_speed(16).expect("supported accelerated audio");
+        output.submit(vec![[1600, -1600]; 1600]);
+        assert_eq!(output.timing().submitted_frames, 100);
+        output.set_muted(true);
+        assert!(output.muted);
+        output.set_muted(false);
+        assert!(!output.muted);
     }
 
     #[test]

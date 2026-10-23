@@ -671,15 +671,15 @@ mod tests {
             pad_action(&mut menu, Action::Down, &mut keyboard, &mut gamepad);
         }
         pad_action(&mut menu, Action::A, &mut keyboard, &mut gamepad);
-        for _ in 0..3 {
+        for _ in 0..4 {
             pad_action(&mut menu, Action::Down, &mut keyboard, &mut gamepad);
         }
         assert_eq!(
             pad_action(&mut menu, Action::A, &mut keyboard, &mut gamepad),
-            Command::SpeedChanged(crate::speed::Speed::Eight)
+            Command::SpeedChanged(crate::speed::Speed::Sixteen)
         );
         pad_action(&mut menu, Action::A, &mut keyboard, &mut gamepad);
-        assert_eq!(menu.selected, 3, "current speed is preselected on reopen");
+        assert_eq!(menu.selected, 4, "current speed is preselected on reopen");
     }
 
     #[test]
