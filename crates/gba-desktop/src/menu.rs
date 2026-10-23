@@ -2,8 +2,9 @@
 
 use crate::gamepad::{GamepadBindings, GamepadControl};
 use crate::keybindings::{Action, BindingError, KeyBindings, key_name};
+use crate::speed::Speed;
 
-const OPTIONS: usize = 6;
+const OPTIONS: usize = 7;
 const KEY_ROWS: usize = 7;
 const KEY_RESET_INDEX: usize = Action::ALL.len();
 const KEY_BACK_INDEX: usize = KEY_RESET_INDEX + 1;
@@ -19,6 +20,7 @@ pub(crate) enum Command {
     SaveState,
     LoadState,
     SettingsChanged,
+    SpeedChanged(Speed),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,6 +28,7 @@ enum Page {
     Options,
     Keybindings,
     ControllerBindings,
+    Speed,
 }
 
 #[derive(Clone, Debug)]
@@ -35,6 +38,7 @@ pub(crate) struct MenuState {
     capture: Option<Action>,
     controller_capture: Option<Action>,
     status: String,
+    speed: Speed,
 }
 
 impl Default for MenuState {
@@ -45,11 +49,16 @@ impl Default for MenuState {
             capture: None,
             controller_capture: None,
             status: String::new(),
+            speed: Speed::One,
         }
     }
 }
 
 impl MenuState {
+    pub(crate) fn set_speed(&mut self, speed: Speed) {
+        self.speed = speed;
+    }
+
     pub(crate) fn handle_key(
         &mut self,
         symbol: u32,
@@ -155,6 +164,12 @@ impl MenuState {
                     self.status.clear();
                     return Command::None;
                 }
+                Page::Speed => {
+                    self.page = Page::Options;
+                    self.selected = 4;
+                    self.status.clear();
+                    return Command::None;
+                }
             }
         }
         if action == Some(Action::Up) {
@@ -184,7 +199,15 @@ impl MenuState {
                     self.selected = 0;
                     Command::None
                 }
-                4 => Command::BackToLibrary,
+                4 => {
+                    self.page = Page::Speed;
+                    self.selected = Speed::ALL
+                        .iter()
+                        .position(|candidate| *candidate == self.speed)
+                        .expect("configured speed is in Speed::ALL");
+                    Command::None
+                }
+                5 => Command::BackToLibrary,
                 _ => Command::Exit,
             },
             Page::Keybindings if self.selected < Action::ALL.len() => {
@@ -202,6 +225,13 @@ impl MenuState {
                 self.page = Page::Options;
                 self.selected = 2;
                 Command::None
+            }
+            Page::Speed => {
+                let speed = Speed::ALL[self.selected];
+                self.speed = speed;
+                self.page = Page::Options;
+                self.selected = 4;
+                Command::SpeedChanged(speed)
             }
             Page::ControllerBindings if self.selected < GamepadBindings::ACTIONS.len() => {
                 let action = GamepadBindings::ACTIONS[self.selected];
@@ -250,6 +280,7 @@ impl MenuState {
             Page::ControllerBindings => {
                 self.draw_controller_bindings(&mut output, gamepad_bindings)
             }
+            Page::Speed => self.draw_speed(&mut output),
         }
         if !self.status.is_empty() {
             draw_text(&mut output, 22, 132, &self.status, 0xffd060);
@@ -262,6 +293,7 @@ impl MenuState {
             Page::Options => OPTIONS,
             Page::Keybindings => KEY_BACK_INDEX + 1,
             Page::ControllerBindings => PAD_BACK_INDEX + 1,
+            Page::Speed => Speed::ALL.len(),
         }
     }
 
@@ -272,6 +304,7 @@ impl MenuState {
             "LOAD STATE",
             "KEYBINDS",
             "PAD KEYBINDS",
+            "SPEED",
             "BACK TO LIBRARY",
             "EXIT",
         ];
@@ -289,6 +322,33 @@ impl MenuState {
                 48,
                 y,
                 entry,
+                if index == self.selected {
+                    0xffd060
+                } else {
+                    0xffffff
+                },
+            );
+        }
+        draw_text(output, 113, 39 + 4 * 12, self.speed.label(), 0x80d8ff);
+        draw_text(output, 26, 119, "UP DOWN MOVE  A SELECT", 0x90a0b0);
+    }
+
+    fn draw_speed(&self, output: &mut [u32]) {
+        draw_text(output, 92, 22, "SPEED", 0x80d8ff);
+        for (index, speed) in Speed::ALL.into_iter().enumerate() {
+            let y = 45 + index * 15;
+            draw_text(
+                output,
+                62,
+                y,
+                if index == self.selected { ">" } else { " " },
+                0xffd060,
+            );
+            draw_text(
+                output,
+                78,
+                y,
+                speed.label(),
                 if index == self.selected {
                     0xffd060
                 } else {
@@ -563,7 +623,7 @@ mod tests {
         let mut menu = MenuState::default();
         let mut keyboard = KeyBindings::default();
         let mut gamepad = GamepadBindings::default();
-        for _ in 0..5 {
+        for _ in 0..6 {
             key(&mut menu, 0xff54, &mut keyboard, &mut gamepad);
         }
         assert_eq!(
@@ -571,13 +631,55 @@ mod tests {
             Command::Exit
         );
         let mut menu = MenuState::default();
-        for _ in 0..4 {
+        for _ in 0..5 {
             key(&mut menu, 0xff54, &mut keyboard, &mut gamepad);
         }
         assert_eq!(
             key(&mut menu, 0xff0d, &mut keyboard, &mut gamepad),
             Command::BackToLibrary
         );
+    }
+
+    #[test]
+    fn speed_page_selects_and_remembers_each_supported_multiplier() {
+        let mut menu = MenuState::default();
+        let mut keyboard = KeyBindings::default();
+        let mut gamepad = GamepadBindings::default();
+        for _ in 0..4 {
+            key(&mut menu, 0xff54, &mut keyboard, &mut gamepad);
+        }
+        assert_eq!(
+            key(&mut menu, 0xff0d, &mut keyboard, &mut gamepad),
+            Command::None
+        );
+        key(&mut menu, 0xff54, &mut keyboard, &mut gamepad);
+        key(&mut menu, 0xff54, &mut keyboard, &mut gamepad);
+        assert_eq!(
+            key(&mut menu, 0xff0d, &mut keyboard, &mut gamepad),
+            Command::SpeedChanged(crate::speed::Speed::Four)
+        );
+        key(&mut menu, 0xff0d, &mut keyboard, &mut gamepad);
+        assert_eq!(menu.selected, 2, "current speed is preselected on reopen");
+    }
+
+    #[test]
+    fn gamepad_can_select_speed_and_speed_page_shows_current_choice() {
+        let mut menu = MenuState::default();
+        let mut keyboard = KeyBindings::default();
+        let mut gamepad = GamepadBindings::default();
+        for _ in 0..4 {
+            pad_action(&mut menu, Action::Down, &mut keyboard, &mut gamepad);
+        }
+        pad_action(&mut menu, Action::A, &mut keyboard, &mut gamepad);
+        for _ in 0..3 {
+            pad_action(&mut menu, Action::Down, &mut keyboard, &mut gamepad);
+        }
+        assert_eq!(
+            pad_action(&mut menu, Action::A, &mut keyboard, &mut gamepad),
+            Command::SpeedChanged(crate::speed::Speed::Eight)
+        );
+        pad_action(&mut menu, Action::A, &mut keyboard, &mut gamepad);
+        assert_eq!(menu.selected, 3, "current speed is preselected on reopen");
     }
 
     #[test]

@@ -6,6 +6,7 @@ use crate::keybindings::{Action, KeyBindings};
 use crate::menu::{Command, MenuState};
 use crate::overlay;
 use crate::presentation::Presentation;
+use crate::speed::Speed;
 use gba_host::Session;
 use gba_host::audio_output::AudioOutput;
 use gba_host::screenshot;
@@ -260,15 +261,17 @@ fn run_window(
     };
     let mut bindings = KeyBindings::default();
     let mut gamepad_bindings = crate::gamepad::GamepadBindings::default();
+    let mut speed = Speed::default();
     let mut settings_warning = None;
     match session.read_settings() {
         Ok(Some(bytes)) => match std::str::from_utf8(&bytes)
             .map_err(|_| "settings are not valid UTF-8".to_owned())
             .and_then(crate::gamepad::decode_settings)
         {
-            Ok((saved_keyboard, saved_gamepad)) => {
+            Ok((saved_keyboard, saved_gamepad, saved_speed)) => {
                 bindings = saved_keyboard;
                 gamepad_bindings = saved_gamepad;
+                speed = saved_speed;
             }
             Err(error) => {
                 settings_warning = Some("INPUT SETTINGS INVALID".to_owned());
@@ -282,6 +285,17 @@ fn run_window(
         }
     }
     let mut menu = MenuState::default();
+    menu.set_speed(speed);
+    set_window_title(
+        &connection,
+        window,
+        protocols,
+        delete,
+        &title,
+        false,
+        false,
+        speed,
+    )?;
     let mut menu_open = false;
     gamepad.suppress_held(&gamepad_bindings);
     let mut state_notice = None;
@@ -296,22 +310,32 @@ fn run_window(
     let mut presentation_work = Duration::ZERO;
     let mut presentation_count = 0u64;
     let mut frame_cache = FrameCache::default();
-    let frame_time = Duration::from_secs_f64(280896.0 / 16777216.0);
     let mut next_frame = Instant::now();
     let mut pacing = FramePacing::default();
     let mut last_write = Instant::now();
     let mut revision = session.machine().save_revision();
     while running {
+        let pacing_state_before = (speed, paused, fast, menu_open);
         let controller_capture_at_frame_start = menu.is_capturing_controller();
         let gamepad_poll = gamepad.poll(&gamepad_bindings);
         if gamepad_poll.menu_pressed && !menu_open {
             menu = MenuState::default();
+            menu.set_speed(speed);
             if let Some(warning) = settings_warning.take() {
                 menu.set_status(warning);
             }
             menu_open = true;
             fast = false;
-            set_window_title(&connection, window, protocols, delete, &title, true, paused)?;
+            set_window_title(
+                &connection,
+                window,
+                protocols,
+                delete,
+                &title,
+                true,
+                paused,
+                speed,
+            )?;
         }
         let menu_was_open = menu_open;
         let mut events = Vec::new();
@@ -352,6 +376,7 @@ fn run_window(
                                 audio: &mut audio,
                                 gamepad,
                                 gamepad_bindings: &mut gamepad_bindings,
+                                speed: &mut speed,
                                 menu: &mut menu,
                                 bindings: &mut bindings,
                                 menu_open: &mut menu_open,
@@ -370,6 +395,7 @@ fn run_window(
                     match bindings.action_for(symbol) {
                         Some(crate::keybindings::Action::Menu) => {
                             menu = crate::menu::MenuState::default();
+                            menu.set_speed(speed);
                             if let Some(warning) = settings_warning.take() {
                                 menu.set_status(warning);
                             }
@@ -383,6 +409,7 @@ fn run_window(
                                 &title,
                                 true,
                                 paused,
+                                speed,
                             )?;
                         }
                         Some(crate::keybindings::Action::Pause) => {
@@ -395,6 +422,7 @@ fn run_window(
                                 &title,
                                 false,
                                 paused,
+                                speed,
                             )?;
                         }
                         Some(crate::keybindings::Action::FastForward) => fast = true,
@@ -428,6 +456,7 @@ fn run_window(
                                     output.reset_after_state_load();
                                 }
                                 revision = session.machine().save_revision();
+                                next_frame = Instant::now();
                                 eprintln!("Loaded state: {}", session.state_path().display());
                             }
                             Err(error) => {
@@ -473,6 +502,7 @@ fn run_window(
                         audio: &mut audio,
                         gamepad,
                         gamepad_bindings: &mut gamepad_bindings,
+                        speed: &mut speed,
                         menu: &mut menu,
                         bindings: &mut bindings,
                         menu_open: &mut menu_open,
@@ -505,6 +535,7 @@ fn run_window(
                         audio: &mut audio,
                         gamepad,
                         gamepad_bindings: &mut gamepad_bindings,
+                        speed: &mut speed,
                         menu: &mut menu,
                         bindings: &mut bindings,
                         menu_open: &mut menu_open,
@@ -526,6 +557,9 @@ fn run_window(
         if !running {
             break;
         }
+        if pacing_state_before != (speed, paused, fast, menu_open) {
+            next_frame = Instant::now();
+        }
         let buttons = if menu_open || menu_was_open {
             0
         } else {
@@ -543,7 +577,7 @@ fn run_window(
         }
         let samples = session.machine_mut().take_audio();
         if let Some(output) = &mut audio {
-            output.set_muted(paused || menu_open || fast);
+            output.set_muted(paused || menu_open || fast || speed != Speed::One);
             output.submit(samples);
         }
         let presentation_started = Instant::now();
@@ -608,7 +642,11 @@ fn run_window(
         if fast && !paused && !menu_open {
             next_frame = Instant::now();
         } else {
-            next_frame += frame_time;
+            next_frame += if paused || menu_open {
+                Speed::One.interval()
+            } else {
+                speed.interval()
+            };
             let now = Instant::now();
             let hint = if paused || menu_open {
                 None
@@ -660,6 +698,7 @@ fn run_window(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn set_window_title(
     connection: &impl Connection,
     window: u32,
@@ -668,6 +707,7 @@ fn set_window_title(
     title: &str,
     menu_open: bool,
     paused: bool,
+    speed: Speed,
 ) -> Result<(), Box<dyn Error>> {
     let suffix = if menu_open {
         " - OPTIONS"
@@ -676,7 +716,7 @@ fn set_window_title(
     } else {
         ""
     };
-    let label = format!("{title}{suffix}");
+    let label = format!("{title} [{}]{suffix}", speed.label());
     connection
         .change_property8(
             PropMode::REPLACE,
@@ -708,6 +748,7 @@ struct MenuRuntime<'a> {
     audio: &'a mut Option<AudioOutput>,
     gamepad: &'a mut crate::gamepad::GamepadInput,
     gamepad_bindings: &'a mut crate::gamepad::GamepadBindings,
+    speed: &'a mut Speed,
     menu: &'a mut MenuState,
     bindings: &'a mut KeyBindings,
     menu_open: &'a mut bool,
@@ -735,6 +776,7 @@ fn handle_menu_command(runtime: MenuRuntime<'_>, command: Command) -> Result<(),
                 runtime.title,
                 false,
                 runtime.paused,
+                *runtime.speed,
             )?;
         }
         Command::BackToLibrary => {
@@ -782,7 +824,12 @@ fn handle_menu_command(runtime: MenuRuntime<'_>, command: Command) -> Result<(),
             }
         },
         Command::SettingsChanged => match runtime.session.write_settings(
-            crate::gamepad::encode_settings(runtime.bindings, runtime.gamepad_bindings).as_bytes(),
+            crate::gamepad::encode_settings(
+                runtime.bindings,
+                runtime.gamepad_bindings,
+                *runtime.speed,
+            )
+            .as_bytes(),
         ) {
             Ok(()) => {
                 runtime.menu.set_status("SETTINGS SAVED");
@@ -793,6 +840,32 @@ fn handle_menu_command(runtime: MenuRuntime<'_>, command: Command) -> Result<(),
                 eprintln!("Key settings write failed: {error}");
             }
         },
+        Command::SpeedChanged(speed) => {
+            *runtime.speed = speed;
+            set_window_title(
+                runtime.connection,
+                runtime.window,
+                runtime.protocols,
+                runtime.delete,
+                runtime.title,
+                *runtime.menu_open,
+                runtime.paused,
+                speed,
+            )?;
+            match runtime.session.write_settings(
+                crate::gamepad::encode_settings(runtime.bindings, runtime.gamepad_bindings, speed)
+                    .as_bytes(),
+            ) {
+                Ok(()) => {
+                    runtime.menu.set_status("SPEED SAVED");
+                    *runtime.settings_warning = None;
+                }
+                Err(error) => {
+                    runtime.menu.set_status("SPEED SET - SAVE FAILED");
+                    eprintln!("Speed setting write failed: {error}");
+                }
+            }
+        }
     }
     Ok(())
 }

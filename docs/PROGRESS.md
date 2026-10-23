@@ -6,7 +6,7 @@ Pinned Rust workspace, Google Rust style, safe-Rust/public-doc lints, synthetic
 CI checks, licensed reference preparation, and small logical commits are in
 place. Local debug/release checks pass; GitHub Actions was not run here.
 
-Standard result: **170 Rust unit/integration tests, one doctest, and 23 Python
+Standard result: **174 Rust unit/integration tests, one doctest, and 23 Python
 tests pass; 3 Rust tests are ignored**. Both external tests remain optional/ignored by
 default.
 The isolated mGBA baseline passes 235/235 cases. The pinned jsmolka ARM,
@@ -103,16 +103,20 @@ soak does not establish real-device pacing or speaker quality.
 ## Remaining work
 
 The approved release checkpoint remains open. There has been no physical-GBA
-capture, full hardware-test-ROM execution, reference video/audio comparison, or
-speaker listening test here. The controlled soak is not a varied 30-minute human
+capture, complete hardware test-suite coverage, reference video/audio comparison,
+or speaker listening test here. The controlled soak is not a varied 30-minute human
 playthrough, and performance on the user's host is not certified.
 
 The options/state implementation has unit coverage for state encoding, ROM
 binding and corruption rejection; atomic Session slots and cartridge-save sync;
 settings round trips and duplicate rejection; menu navigation/capture; host-only
 overlays; XDG path discovery, ROM hashing/deduplication, legacy sidecar migration,
-and desktop library switching. Selectable speed controls are deferred at the user's
-request; Tab fast-forward remains. The isolated-ROM Xvfb acceptance run passed
+and desktop library switching. Selectable 1x/2x/4x/8x pacing is now available
+in the options menu and persisted per game; audio is muted above 1x, while Tab
+remains temporary unlimited fast-forward. Unit tests cover the choices and
+settings compatibility. The Xvfb validator now exercises every selection and
+reload, but could not be run here because Xvfb is unavailable; achieved real-host
+rate is also unverified. The earlier isolated-ROM Xvfb acceptance run passed
 at scale 3: 6,000 frames / 100.222 emulated seconds in 109.065 wall seconds. It
 covered menu state save/load/resume, duplicate-key rejection, keybinding
 persistence/reload, F6/F7 success and failure notices, and explicit Exit at

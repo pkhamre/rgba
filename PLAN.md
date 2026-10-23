@@ -116,7 +116,7 @@ This checkpoint is a proposed concrete definition of “playable,” not a claim
 - Escape opens an in-window options menu. Escape from the menu returns to gameplay; an explicit Exit item flushes the cartridge save and quits.
 - Provide one atomic quick-save-state slot beside the ROM. State files are versioned and bound to the loaded ROM; loading validates fully before replacing the running machine.
 - A successful load restores the complete emulated machine and atomically synchronizes its cartridge backup to the configured `.sav`, preserving existing backup behavior. Cartridge saves and emulator states remain separate files. Show an in-window success/failure notice for state saves and loads.
-- Selectable speed controls are deferred at the user's request. Keep the existing Tab fast-forward behavior.
+- Provide menu-selectable 1x, 2x, 4x, and 8x host pacing, persisted per game. Keep Tab as temporary unlimited fast-forward; Tab release returns to the selected speed. Mute host audio above 1x without changing guest clocks or dropping emulated frames.
 - Provide a Keybinds submenu for all GBA buttons and emulator actions, including menu navigation, pause, fast-forward, state save/load, and exit. Persist bindings in a settings file beside the ROM. Reject duplicate bindings with a clear explanation and offer Reset Defaults.
 - Implement/test core state round trips and corrupt/incompatible state rejection before desktop integration. Then add settings persistence, key capture/conflict handling, menu UI, state-result notices, and desktop validation in separate logical steps.
 
@@ -137,7 +137,8 @@ persistence, settings storage, keybinding/menu models, state-result notices, and
 desktop event-loop integration. The user-requested XDG game library scans a
 single games directory, hashes ROM identity, centralizes saves/states/settings,
 and supports startup selection plus switching from the in-game menu. Selectable
-speed controls remain deferred; Tab fast-forward remains. Physical hardware,
+1x/2x/4x/8x pacing is implemented in the options menu and persisted per game;
+audio is muted above 1x, and Tab fast-forward remains temporary. Physical hardware,
 varied gameplay, and real-device audio validation remain open.
 
 ## Work policy

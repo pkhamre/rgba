@@ -172,7 +172,22 @@ def validate(args):
                     if b"OPTIONS" not in display.title():raise AssertionError("Load State left options menu")
                     display.tap(0xff1b);time.sleep(.2)
                     if b"OPTIONS" in display.title():raise AssertionError("Escape did not resume gameplay")
+                    display.tap(0xff1b)
+                    for _ in range(4):display.tap(0xff54)
+                    display.tap(0xff0d)
+                    speed_settings=[]
+                    for speed_index, value in enumerate(("2", "4", "8", "1")):
+                        display.tap(0xff54);display.tap(0xff0d);time.sleep(.15)
+                        label=f"[{value}X]".encode()
+                        if label not in display.title():raise AssertionError(f"speed title missing {label!r}")
+                        expected=f"gba-speed-v1\n{value}\n"
+                        if expected not in settings_path.read_text():raise AssertionError(f"speed setting {value} was not persisted")
+                        speed_settings.append(value)
+                        if speed_index < 3:display.tap(0xff0d)
+                    display.tap(0xff1b);time.sleep(.2)
+                    if b"OPTIONS" in display.title():raise AssertionError("speed test did not resume gameplay")
                     menu_tested=True;report["options_save_load_resume_tested"]=True
+                    report["speed_values_persisted"]=speed_settings
                 if not bindings_tested and elapsed>=3:
                     display.tap(0xff1b)
                     for _ in range(2):display.tap(0xff54)
@@ -180,8 +195,9 @@ def validate(args):
                     for _ in range(12):display.tap(0xff54)
                     display.tap(0xff0d);display.tap(0xffc3)
                     settings=settings_path
-                    if settings.exists():raise AssertionError("duplicate keybinding was incorrectly saved")
+                    saved_before_duplicate=settings.read_text()
                     display.tap(0x6d)
+                    if settings.read_text()!=saved_before_duplicate:raise AssertionError("duplicate keybinding changed settings")
                     if "OPTIONS MENU=0000006d,00000000" not in settings.read_text():raise AssertionError("keybinding was not persisted")
                     display.tap(0x78);display.tap(0x78);time.sleep(.2)
                     if b"OPTIONS" in display.title():raise AssertionError("custom menu binding did not resume gameplay")
@@ -254,9 +270,11 @@ def validate(args):
                 if display.find_window(exit_process.pid):break
                 time.sleep(.1)
             if not display.window:raise RuntimeError("exit-test window did not map")
+            time.sleep(.1)
+            if b"[1X]" not in display.title():raise AssertionError("per-game 1X speed setting did not reload")
             display.tap(0x6d)
             if b"OPTIONS" not in display.title():raise AssertionError("saved menu binding did not reload")
-            for _ in range(5):display.tap(0xff54)
+            for _ in range(6):display.tap(0xff54)
             display.key(0xff0d,True);display.key(0xff0d,False)
             try:exit_status=exit_process.wait(timeout=10)
             except subprocess.TimeoutExpired as error:raise AssertionError("explicit Exit did not close the window") from error

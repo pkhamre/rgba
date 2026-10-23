@@ -46,8 +46,10 @@ proof.
   restore-time atomic cartridge-save synchronization with `.sav.bak` retention.
   Desktop menu/keybind customization and state-result notices are implemented.
   The XDG game library scans ROMs, stores data by SHA-256 identity, and preserves
-  existing central files during legacy-sidecar migration. Selectable speed is
-  deferred; Tab fast-forward remains.
+  existing central files during legacy-sidecar migration. Host pacing offers
+  selectable 1x/2x/4x/8x speeds, persisted per game; audio is muted above 1x and
+  Tab remains temporary unlimited fast-forward. Guest clocks and emulated frames
+  are not changed or skipped by the speed setting.
 
 ## Renderer optimization regressions
 

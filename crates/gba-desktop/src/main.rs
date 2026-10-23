@@ -11,6 +11,7 @@ mod library_window;
 mod menu;
 mod overlay;
 mod presentation;
+mod speed;
 
 use std::env;
 use std::process::ExitCode;

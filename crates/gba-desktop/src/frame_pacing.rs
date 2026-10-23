@@ -51,6 +51,14 @@ mod tests {
     }
 
     #[test]
+    fn selected_speed_sets_the_wall_clock_frame_deadline() {
+        for speed in crate::speed::Speed::ALL {
+            let mut pacing = FramePacing::default();
+            assert_eq!(pacing.wait(speed.interval(), None), speed.interval());
+        }
+    }
+
+    #[test]
     fn unpaced_consumer_cannot_cause_runaway_fast_forward() {
         let mut pacing = FramePacing::default();
         let mut wall = Duration::ZERO;

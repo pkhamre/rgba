@@ -1,6 +1,7 @@
 //! Linux evdev gamepad input and per-game controller bindings.
 
 use crate::keybindings::{Action, BindingError, KeyBindings};
+use crate::speed::Speed;
 use evdev::{AbsoluteAxisCode, Device, EventSummary, KeyCode};
 use std::collections::HashSet;
 use std::io;
@@ -24,6 +25,7 @@ const MENU_COMBO: u16 = bit(Action::Start) | bit(Action::Select);
 const STICK_DEADZONE: f32 = 0.35;
 const RECONNECT_INTERVAL: Duration = Duration::from_secs(2);
 const SETTINGS_MARKER: &str = "gba-gamepad-bindings-v1\n";
+const SPEED_MARKER: &str = "gba-speed-v1\n";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum GamepadControl {
@@ -211,19 +213,45 @@ impl Default for GamepadBindings {
     }
 }
 
-pub(crate) fn encode_settings(keyboard: &KeyBindings, gamepad: &GamepadBindings) -> String {
-    format!("{}{}", keyboard.encode(), gamepad.encode())
+pub(crate) fn encode_settings(
+    keyboard: &KeyBindings,
+    gamepad: &GamepadBindings,
+    speed: Speed,
+) -> String {
+    format!(
+        "{}{}{}{}\n",
+        keyboard.encode(),
+        gamepad.encode(),
+        SPEED_MARKER,
+        speed.multiplier()
+    )
 }
 
-pub(crate) fn decode_settings(text: &str) -> Result<(KeyBindings, GamepadBindings), String> {
-    if let Some((keyboard, gamepad)) = text.split_once(SETTINGS_MARKER) {
+pub(crate) fn decode_settings(text: &str) -> Result<(KeyBindings, GamepadBindings, Speed), String> {
+    let (bindings_text, speed) = match text.split_once(SPEED_MARKER) {
+        Some((bindings, encoded_speed)) => {
+            if bindings.contains(SPEED_MARKER) {
+                return Err("duplicate speed setting".to_owned());
+            }
+            let value = encoded_speed.strip_suffix('\n').unwrap_or(encoded_speed);
+            if value.contains('\n') {
+                return Err("invalid speed setting".to_owned());
+            }
+            (bindings, Speed::parse(value)?)
+        }
+        None => (text, Speed::default()),
+    };
+    let (keyboard, gamepad) = if let Some((keyboard, gamepad)) =
+        bindings_text.split_once(SETTINGS_MARKER)
+    {
         let keyboard = KeyBindings::decode(keyboard).map_err(|error| format!("{error:?}"))?;
         let gamepad = GamepadBindings::decode(&format!("{SETTINGS_MARKER}{gamepad}"))?;
-        Ok((keyboard, gamepad))
+        (keyboard, gamepad)
     } else {
-        let keyboard = KeyBindings::decode(text).map_err(|error| format!("{error:?}"))?;
-        Ok((keyboard, GamepadBindings::default()))
-    }
+        let keyboard = KeyBindings::decode(bindings_text).map_err(|error| format!("{error:?}"))?;
+        (keyboard, GamepadBindings::default())
+    };
+    Ok((keyboard, gamepad, speed))
 }
 
 pub(crate) struct GamepadInput {
@@ -526,6 +554,7 @@ mod tests {
         decode_settings, encode_settings,
     };
     use crate::keybindings::{Action, KeyBindings};
+    use crate::speed::Speed;
     use evdev::{AbsoluteAxisCode, KeyCode};
 
     #[test]
@@ -556,15 +585,37 @@ mod tests {
     fn controller_settings_round_trip_and_legacy_keyboard_settings_load_defaults() {
         let keyboard = KeyBindings::default();
         let gamepad = GamepadBindings::default();
-        let encoded = encode_settings(&keyboard, &gamepad);
+        let speed = Speed::Four;
+        let encoded = encode_settings(&keyboard, &gamepad, speed);
         assert_eq!(
             decode_settings(&encoded).expect("encoded settings are valid"),
-            (keyboard.clone(), gamepad)
+            (keyboard.clone(), gamepad, speed)
         );
         assert_eq!(
-            decode_settings(&keyboard.encode()).expect("legacy settings are valid"),
-            (keyboard, GamepadBindings::default())
+            decode_settings(&keyboard.encode()).expect("legacy keyboard settings are valid"),
+            (keyboard.clone(), GamepadBindings::default(), Speed::One)
         );
+        let previous_format = format!(
+            "{}{}",
+            keyboard.encode(),
+            GamepadBindings::default().encode()
+        );
+        assert_eq!(
+            decode_settings(&previous_format).expect("legacy controller settings are valid"),
+            (keyboard.clone(), GamepadBindings::default(), Speed::One)
+        );
+        assert_eq!(
+            decode_settings(&encode_settings(
+                &keyboard,
+                &GamepadBindings::default(),
+                Speed::Eight
+            ))
+            .expect("speed settings are valid")
+            .2,
+            Speed::Eight
+        );
+        let invalid = format!("{}gba-speed-v1\n3\n", keyboard.encode());
+        assert!(decode_settings(&invalid).is_err());
     }
 
     #[test]

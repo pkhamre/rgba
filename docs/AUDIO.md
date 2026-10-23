@@ -48,7 +48,8 @@ A worker applies host-side DC filtering and writes signed-16 stereo PCM:
   frames are bounded; full queues reject output rather than block guest timing.
 - 80 ms device latency is requested, not guaranteed. Pulse also requests 20 ms
   processing intervals. Normal desktop packets contain about 549 frames.
-- Pause/fast-forward mute new output; existing device buffers drain. Shutdown
+- Pause, Tab fast-forward, and selected speeds above 1x mute new output; existing
+  device buffers drain. Returning to 1x re-primes the audio reserve. Shutdown
   stops/reaps the player and bounds waiting for its writer thread.
 
 The initial two-packet ceiling dropped 16,458 frames in a 600-frame Pulse-null
