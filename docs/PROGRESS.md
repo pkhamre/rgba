@@ -6,7 +6,7 @@ Pinned Rust workspace, Google Rust style, safe-Rust/public-doc lints, synthetic
 CI checks, licensed reference preparation, and small logical commits are in
 place. Local debug/release checks pass; GitHub Actions was not run here.
 
-Standard result: **174 Rust unit/integration tests, one doctest, and 23 Python
+Standard result: **174 Rust unit/integration tests, one doctest, and 26 Python
 tests pass; 3 Rust tests are ignored**. Both external tests remain optional/ignored by
 default.
 The isolated mGBA baseline passes 235/235 cases. The pinned jsmolka ARM,
@@ -22,6 +22,16 @@ WAITCNT, and multiply carry reconstruction are present. CPU/bus accuracy
 acceptance remains open: physical reserved-encoding evidence, complete bus
 signals/LOCK, precise cycle ordering, BIOS latch, open bus, prefetch, and
 contention. See CPU_RESEARCH.md and ACCURACY.md.
+
+## GitHub publication preparation
+
+The README documents binary/source setup, controls, persistence, known accuracy
+gaps, and tagged releases. Original project code has an MIT license; existing
+third-party notices remain separate. A `v*` tag workflow checks and builds the
+x86_64 musl desktop package, then creates a GitHub Release with the archive and
+checksum. Local packaging and asset-free binary checks pass; workflow syntax
+passes actionlint. GitHub-hosted execution and release upload remain unverified.
+See [TESTING.md](TESTING.md) for the validation scope.
 
 ## Runnable preview and requested follow-up
 

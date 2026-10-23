@@ -1,0 +1,57 @@
+name: Linux release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.90.0
+        with:
+          components: clippy, rustfmt
+      - run: sh scripts/check.sh
+      - run: cargo test --locked --workspace --release
+
+  release:
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.90.0
+        with:
+          targets: x86_64-unknown-linux-musl
+      - name: Build and package desktop
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: sh scripts/package-linux.sh "$RELEASE_TAG"
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          args=(--verify-tag --generate-notes --title "rgba $RELEASE_TAG")
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            args+=(--prerelease --latest=false)
+          fi
+          gh release create "$RELEASE_TAG" artifacts/release/*.tar.gz artifacts/release/*.sha256 "${args[@]}"

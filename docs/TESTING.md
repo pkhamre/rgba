@@ -10,7 +10,7 @@ sh scripts/check.sh
 sh scripts/cargo.sh test --workspace --release
 ```
 
-Current standard result: **174 Rust unit/integration tests, one doctest, and 23
+Current standard result: **174 Rust unit/integration tests, one doctest, and 26
 Python tool tests pass**. Two ignored optional tests require reference assets.
 An additional ignored presentation test requires a dedicated Xvfb display.
 The standard tests use synthetic data only; CI needs no BIOS/game/test ROM.
@@ -22,6 +22,23 @@ when state loading replaces cartridge data, alias protection, and corrupt-state
 failure without changing the running machine or save file. Desktop menu, game
 library, keyboard/gamepad controls, and state-result notices are implemented and
 have separate coverage documented in the desktop validation section below.
+
+## Linux release packaging
+
+`sh scripts/package-linux.sh v0.1.0` builds the locked x86_64 musl desktop binary,
+runs `--help`, and writes an archive and SHA-256 checksum to `artifacts/release/`.
+Install the target first with `rustup target add x86_64-unknown-linux-musl`.
+The archive includes only the binary, README, project license, `docs/`, and
+`LICENSES/`; BIOS/ROM images and saves are not included.
+
+Three synthetic packaging tests cover archive contents, executable permissions,
+checksums, rejected tag/argument input, and build-failure propagation. Local
+packaging of the actual release binary, checksum verification, extracted-binary
+`--help`, and ELF inspection (x86_64, no dynamic interpreter) passed. Both GitHub
+workflows passed actionlint 1.7.12. The new tag-triggered release workflow has not
+run on GitHub here; hosted builds, token permissions, and release publication
+still need an end-to-end run after the repository is published. No release was
+created during local validation.
 
 ## Optional headless CPU and memory test ROMs
 
