@@ -63,6 +63,32 @@ previous PPM (1,123,584,003 clocks, PC 080008c8). The full strict CPU comparison
 still has 2,124,072 matches and 125,928 failures. These are unchanged-behavior
 regressions, not new evidence of physical rendering or timing accuracy.
 
+## Rusturf Tunnel semi-transparent cloud correction
+
+The supplied Emerald state reproduced opaque clouds with WIN0 covering the
+screen: `DISPCNT=0x7f60`, `WININ=0x1f1f`, `BLDCNT=0x1e40`, and
+`BLDALPHA=0x080c`. The window disabled ordinary color effects, and the renderer
+incorrectly used that bit to suppress semi-transparent OBJ alpha blending too.
+Semi-transparent OBJs now force alpha blending independently of that window bit
+and BLDCNT's effect/first-target selection; a visible second target is still
+required. Ordinary effects and OBJ visibility remain controlled by the window.
+This agrees with the semi-transparent path in
+[mGBA's software OBJ renderer](https://github.com/mgba-emu/mgba/blob/master/src/gba/renderers/software-obj.c)
+(`GBAVideoSoftwareRendererPreprocessSprite`), rather than a new physical-hardware
+measurement.
+
+An asset-free regression covers WIN0, WIN1, OBJ window, and outside-window
+regions, all four effect modes, missing second targets, ordinary sprites, and
+window-hidden sprites. It fails with the old blending gate and passes with the
+correction. Local re-rendering of the supplied state and three continued game
+frames show transparent clouds. Captures are ignored under `artifacts/debug/`;
+the supplied video reference differs in scene/overlay phase, so no pixel-exact
+reference match is claimed. Interactive user verification is still pending.
+`sh scripts/check.sh` and release workspace tests pass; host audio tests emit
+`sleep: not found` warnings in this environment. The desktop release build also
+succeeds. The optional strict CPU reference comparison was not rerun; its known
+failures below are not resolved by this rendering change.
+
 ## Explicit gaps
 
 - Reserved/unsupported encoding policies and PC snapshot differences remain.

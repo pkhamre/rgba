@@ -117,18 +117,19 @@ impl Ppu {
                 let first = blend & (1 << top.layer) != 0;
                 let second = blend & (1 << (8 + below.layer)) != 0;
                 let effect = (blend >> 6) & 3;
-                if mask & 0x20 != 0 {
-                    if (top.semi || (effect == 1 && first)) && second {
-                        color = Self::mix(
-                            top.color,
-                            below.color,
-                            (half(io, 0x52) & 31).min(16),
-                            ((half(io, 0x52) >> 8) & 31).min(16),
-                        );
-                    } else if first && (effect == 2 || effect == 3) {
-                        let amount = (half(io, 0x54) & 31).min(16);
-                        color = Self::brightness(color, amount, effect == 2);
-                    }
+                let effects_enabled = mask & 0x20 != 0;
+                // Semi-transparent OBJs force alpha blending even when the window
+                // disables ordinary color effects. They still need a second target.
+                if (top.semi || (effects_enabled && effect == 1 && first)) && second {
+                    color = Self::mix(
+                        top.color,
+                        below.color,
+                        (half(io, 0x52) & 31).min(16),
+                        ((half(io, 0x52) >> 8) & 31).min(16),
+                    );
+                } else if effects_enabled && first && (effect == 2 || effect == 3) {
+                    let amount = (half(io, 0x54) & 31).min(16);
+                    color = Self::brightness(color, amount, effect == 2);
                 }
                 self.pixels[y * 240 + x] = Self::rgb(color);
             }
@@ -486,6 +487,84 @@ mod tests {
                     expected,
                     "len={length}, offset={offset}"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn semi_transparent_objects_blend_even_when_windows_disable_effects() {
+        // Exercise WIN0, WIN1, OBJ window, and outside all windows. Ordinary
+        // alpha/brightness effects must remain disabled in these regions.
+        for region in 0..4 {
+            for semi in [false, true] {
+                for effect in 0..4 {
+                    for second in [false, true] {
+                        let mut ppu = Ppu::default();
+                        let mut io = [0; 0x400];
+                        let mut palette = [0; 0x400];
+                        let mut vram = vec![0; 0x18000];
+                        let mut oam = [0; 0x400];
+                        let put = |bytes: &mut [u8], offset: usize, value: u16| {
+                            bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+                        };
+                        let window = match region {
+                            0 => 0x2000,
+                            1 => 0x4000,
+                            2 => 0x8000,
+                            _ => 0x2000,
+                        };
+                        put(&mut io, 0, 0x1240 | window); // BG1, OBJ, 1D tiles.
+                        put(&mut io, 0x0a, 0x0101); // BG1 map at 0x800, priority 1.
+                        put(&mut io, 0x40, 8);
+                        put(&mut io, 0x42, 8);
+                        put(&mut io, 0x44, if region == 3 { 0 } else { 8 });
+                        put(&mut io, 0x46, 8);
+                        put(&mut io, 0x48, 0x1f1f);
+                        put(&mut io, 0x4a, 0x1f1f);
+                        // OBJ is deliberately not a first target: semi-transparent
+                        // mode must force blending independently of BLDCNT too.
+                        put(
+                            &mut io,
+                            0x50,
+                            (effect << 6) | if second { 0x0200 } else { 0 },
+                        );
+                        put(&mut io, 0x52, 0x0808);
+                        put(&mut io, 0x54, 16);
+                        put(&mut palette, 2, 31); // Red BG.
+                        put(&mut palette, 0x202, 31 << 10); // Blue OBJ.
+                        vram[32..64].fill(0x11);
+                        put(&mut vram, 0x800, 1);
+                        vram[0x10000..0x10020].fill(0x11);
+                        for object in 0..128 {
+                            put(&mut oam, object * 8, 0x0200); // Disable unused OBJs.
+                        }
+                        put(&mut oam, 0, if semi { 0x0400 } else { 0 });
+                        if region == 2 {
+                            put(&mut oam, 8, 0x0800); // Overlapping OBJ window.
+                        }
+                        ppu.render_line(0, &io, &palette, &vram, &oam);
+                        let expected = if semi && second {
+                            15 | (15 << 10)
+                        } else {
+                            31 << 10
+                        };
+                        assert_eq!(
+                            ppu.pixels[0],
+                            Ppu::rgb(expected),
+                            "region={region}, semi={semi}, effect={effect}, second={second}"
+                        );
+                        // Enabling OBJ as a first target must not enable ordinary
+                        // effects where the window has disabled them.
+                        io[0x50] |= 0x10;
+                        ppu.render_line(0, &io, &palette, &vram, &oam);
+                        assert_eq!(ppu.pixels[0], Ppu::rgb(expected));
+                        // Window OBJ visibility is still honored for semi-transparent OBJs.
+                        put(&mut io, 0x48, 0x0f0f);
+                        put(&mut io, 0x4a, 0x0f0f);
+                        ppu.render_line(0, &io, &palette, &vram, &oam);
+                        assert_eq!(ppu.pixels[0], Ppu::rgb(31));
+                    }
+                }
             }
         }
     }
