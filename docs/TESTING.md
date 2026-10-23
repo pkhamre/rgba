@@ -10,7 +10,7 @@ sh scripts/check.sh
 sh scripts/cargo.sh test --workspace --release
 ```
 
-Current standard result: **146 Rust unit/integration tests, one doctest, and 23
+Current standard result: **170 Rust unit/integration tests, one doctest, and 23
 Python tool tests pass**. Two ignored optional tests require reference assets.
 An additional ignored presentation test requires a dedicated Xvfb display.
 The standard tests use synthetic data only; CI needs no BIOS/game/test ROM.
@@ -19,8 +19,18 @@ Core save-state unit tests exercise complete deterministic round trips, ROM
 mismatch, corrupt checksum and payload rejection, and unchanged state on failure.
 Host integration tests also cover atomic quick-slot round trips, backup retention
 when state loading replaces cartridge data, alias protection, and corrupt-state
-failure without changing the running machine or save file. Desktop menu controls
-are not yet implemented.
+failure without changing the running machine or save file. Desktop menu, game
+library, keyboard/gamepad controls, and state-result notices are implemented and
+have separate coverage documented in the desktop validation section below.
+
+## Optional headless CPU and memory test ROMs
+
+The ARM, Thumb, and memory suites from pinned jsmolka/gba-tests run via the
+normal BIOS boot path with a bounded execution budget and explicit result
+register/self-branch completion detection. Downloaded ROMs stay ignored. The
+local result is ARM/Thumb/memory PASS; the source does not establish physical
+capture provenance. See [HARDWARE_TESTS.md](HARDWARE_TESTS.md) for pinning,
+license, protocol, and limitations.
 
 ## Optional strict CPU reference comparison
 

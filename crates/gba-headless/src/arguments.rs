@@ -11,16 +11,20 @@ pub(crate) struct Arguments {
     pub(crate) frames: Option<u64>,
     pub(crate) screenshot: Option<PathBuf>,
     pub(crate) input: Vec<(u64, u16)>,
+    pub(crate) test_result_register: Option<usize>,
 }
 
 pub(crate) const USAGE: &str = "\
 gba-headless --bios PATH --rom PATH [--steps COUNT] [--trace PATH] [--stop-at HEX]
+  [--test-result-register 0..14]
 Runs at most COUNT CPU activities (default 100000); stops on unsupported hardware.
 --stop-at stops before executing the address (hexadecimal, optional 0x prefix).
 Trace files contain v1 post-activity state; exec/skip, halt, and irq identify the kind.
 --frames COUNT runs display frames instead of counting CPU activities.
 --screenshot PATH writes the final 240x160 framebuffer as a binary PPM image.
 --input FRAME:BUTTONS changes held keys (e.g. 400:start, 410:none).
+--test-result-register waits for a stable self-branch and reports zero as PASS,
+  nonzero as FAIL. Execution still stops at --steps if the ROM never completes.
 Headless runner: sound is emulated, not played. Use scripted_session for WAV capture.";
 
 impl Arguments {
@@ -33,11 +37,19 @@ impl Arguments {
         let mut frames = None;
         let mut screenshot = None;
         let mut input = Vec::new();
+        let mut test_result_register = None;
         let mut args = args;
         while let Some(option) = args.next() {
             let value = match option.as_str() {
-                "--bios" | "--rom" | "--steps" | "--trace" | "--stop-at" | "--frames"
-                | "--screenshot" | "--input" => args
+                "--bios"
+                | "--rom"
+                | "--steps"
+                | "--trace"
+                | "--stop-at"
+                | "--frames"
+                | "--screenshot"
+                | "--input"
+                | "--test-result-register" => args
                     .next()
                     .ok_or_else(|| format!("missing value for {option}"))?,
                 _ => return Err(format!("unknown option {option}")),
@@ -72,6 +84,15 @@ impl Arguments {
                     frames = Some(count);
                 }
                 "--screenshot" if screenshot.is_none() => screenshot = Some(PathBuf::from(value)),
+                "--test-result-register" if test_result_register.is_none() => {
+                    let register: usize = value
+                        .parse()
+                        .map_err(|_| "test result register must be 0..14".to_owned())?;
+                    if register > 14 {
+                        return Err("test result register must be 0..14".to_owned());
+                    }
+                    test_result_register = Some(register);
+                }
                 "--input" => {
                     let (frame, buttons) =
                         value.split_once(':').ok_or("input must be FRAME:BUTTONS")?;
@@ -103,9 +124,15 @@ impl Arguments {
                 _ => return Err(format!("duplicate option {option}")),
             }
         }
-        if frames.is_some() && (steps.is_some() || stop_at.is_some() || trace.is_some()) {
+        if frames.is_some()
+            && (steps.is_some()
+                || stop_at.is_some()
+                || trace.is_some()
+                || test_result_register.is_some())
+        {
             return Err(
-                "--frames cannot be combined with --steps, --stop-at or --trace".to_owned(),
+                "--frames cannot be combined with --steps, --stop-at, --trace or test result detection"
+                    .to_owned(),
             );
         }
         if !input.is_empty() && frames.is_none() {
@@ -120,6 +147,7 @@ impl Arguments {
             frames,
             screenshot,
             input,
+            test_result_register,
         })
     }
 }

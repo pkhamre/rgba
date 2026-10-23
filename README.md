@@ -121,6 +121,7 @@ never overwrite existing files. `--help` needs no assets.
 - [docs/STYLE.md](docs/STYLE.md): Google Rust style policy.
 - [docs/CPU_RESEARCH.md](docs/CPU_RESEARCH.md): CPU corrections and disagreements.
 - [docs/UPSTREAM_CPU_TESTS.md](docs/UPSTREAM_CPU_TESTS.md): 235 isolated mGBA cases.
+- [docs/HARDWARE_TESTS.md](docs/HARDWARE_TESTS.md): bounded BIOS-boot ARM/Thumb/memory ROM runner.
 
 Strict CPU comparison still fails; it is not suppressed by the passing standard
 checks. The multiply carry model and test constants retain their notices under

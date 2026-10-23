@@ -58,6 +58,9 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     }
     let mut completed = 0;
     let mut fault = None;
+    let mut completion: Option<u32> = None;
+    let mut previous_idle: Option<(u32, u32, u32)> = None;
+    let mut idle_repeats = 0;
     while completed < args.steps {
         if args.stop_at == Some(machine.cpu().instruction_address()) {
             break;
@@ -67,6 +70,29 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                 completed += 1;
                 if let Some(writer) = &mut trace {
                     writeln!(writer, "{step}")?;
+                }
+                if let Some(register) = args.test_result_register {
+                    if let Some(value) = self_branch_result(
+                        step.address,
+                        step.opcode,
+                        step.thumb,
+                        step.registers[register],
+                    ) {
+                        let current = (step.address, step.opcode, value);
+                        if previous_idle == Some(current) {
+                            idle_repeats += 1;
+                        } else {
+                            idle_repeats = 0;
+                        }
+                        previous_idle = Some(current);
+                        if idle_repeats >= 2 {
+                            completion = Some(value);
+                            break;
+                        }
+                    } else {
+                        previous_idle = None;
+                        idle_repeats = 0;
+                    }
                 }
             }
             Err(error) => {
@@ -91,6 +117,20 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     if let Some(error) = fault {
         return Err(error.into());
     }
+    if let Some(register) = args.test_result_register {
+        let value = completion.ok_or_else(|| {
+            io::Error::other(format!(
+                "test did not reach a stable self-branch within {} CPU activities",
+                args.steps
+            ))
+        })?;
+        if value == 0 {
+            eprintln!("TEST_RESULT=PASS register=r{register} value=00000000");
+        } else {
+            eprintln!("TEST_RESULT=FAIL register=r{register} value={value:08x}");
+            return Err(io::Error::other("hardware test ROM reported a failure").into());
+        }
+    }
     if let Some(target) = args.stop_at
         && cpu.instruction_address() != target
     {
@@ -101,4 +141,44 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     }
     session.flush_save()?;
     Ok(())
+}
+
+fn self_branch_result(address: u32, opcode: u32, thumb: bool, result: u32) -> Option<u32> {
+    let target = if thumb {
+        if opcode & 0xf800 != 0xe000 {
+            return None;
+        }
+        let immediate = (opcode & 0x07ff) as i32;
+        let signed = if immediate & 0x0400 != 0 {
+            immediate - 0x0800
+        } else {
+            immediate
+        };
+        address.wrapping_add(4).wrapping_add((signed * 2) as u32)
+    } else {
+        if opcode >> 28 != 0xe || opcode & 0x0e00_0000 != 0x0a00_0000 {
+            return None;
+        }
+        let displacement = ((opcode << 8) as i32 >> 6) as u32;
+        address.wrapping_add(8).wrapping_add(displacement)
+    };
+    (target == address).then_some(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::self_branch_result;
+    #[test]
+    fn recognizes_only_arm_and_thumb_self_branches() {
+        assert_eq!(
+            self_branch_result(0x0800_0100, 0xeaff_fffe, false, 12),
+            Some(12)
+        );
+        assert_eq!(self_branch_result(0x0800_0100, 0xe7fe, true, 7), Some(7));
+        assert_eq!(
+            self_branch_result(0x0800_0100, 0xeaff_fffd, false, 12),
+            None
+        );
+        assert_eq!(self_branch_result(0x0800_0100, 0xe7fd, true, 7), None);
+    }
 }

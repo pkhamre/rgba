@@ -6,11 +6,15 @@ Pinned Rust workspace, Google Rust style, safe-Rust/public-doc lints, synthetic
 CI checks, licensed reference preparation, and small logical commits are in
 place. Local debug/release checks pass; GitHub Actions was not run here.
 
-Standard result: **170 Rust tests pass (including one doctest), 3 are ignored,
-and 23 Python tests pass**. Both external tests remain optional/ignored by
+Standard result: **170 Rust unit/integration tests, one doctest, and 23 Python
+tests pass; 3 Rust tests are ignored**. Both external tests remain optional/ignored by
 default.
-The isolated mGBA baseline passes 235/235 cases. Strict CPU comparison still
-fails unchanged: **2,124,072 matches / 125,928 failures** out of 2,250,000,
+The isolated mGBA baseline passes 235/235 cases. The pinned jsmolka ARM,
+Thumb, and memory test ROMs run through the BIOS with a bounded
+self-branch/result-register completion protocol; all three pass locally. These
+authored expected-result ROMs have no verified physical-capture provenance, so
+they are regression evidence, not hardware certification. Strict CPU comparison
+still fails unchanged: **2,124,072 matches / 125,928 failures** out of 2,250,000,
 27 of 45 groups fully matching. No reference mismatches are waived.
 
 ARM/Thumb, banked state, pipeline, exceptions, memory map, baseline N/S/I timing,
@@ -117,5 +121,8 @@ Xvfb integration run verified a multi-game startup chooser and returning to the
 library to select and launch again. Audio was disabled, so these are not
 audio-device results.
 
-Next: hardware-backed CPU/bus/device/audio tests, reference captures, real-device
-listening/latency checks, and broader gameplay validation.
+Next: investigate strict CPU/bus mismatches against hardware-backed evidence;
+run the preview on physical controller/audio/display hardware; collect reference
+captures and broaden interactive gameplay validation. Test-ROM passes do not
+replace physical measurements. Real-device ALSA underruns and PipeWire warnings
+remain unresolved.
