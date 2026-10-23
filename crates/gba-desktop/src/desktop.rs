@@ -14,7 +14,7 @@ use std::env;
 use std::error::Error;
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::PathBuf;
 use std::process;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use x11rb::connection::{Connection, RequestConnection};
@@ -901,15 +901,29 @@ fn flush_save(session: &mut Session) -> bool {
 }
 
 fn capture(session: &Session) -> Result<(), Box<dyn Error>> {
-    fs::create_dir_all("artifacts")?;
-    let name = format!(
-        "artifacts/screenshot-{}-{}.ppm",
+    let directory = screenshot_directory()?;
+    fs::create_dir_all(&directory)?;
+    let path = directory.join(format!(
+        "screenshot-{}-{}.ppm",
         SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos(),
         process::id()
-    );
-    screenshot::write_ppm(Path::new(&name), session.machine().screen())?;
-    eprintln!("Screenshot: {name}");
+    ));
+    screenshot::write_ppm(&path, session.machine().screen())?;
+    eprintln!("Screenshot: {}", path.display());
     Ok(())
+}
+
+fn screenshot_directory() -> Result<PathBuf, io::Error> {
+    if let Some(pictures) = std::env::var_os("XDG_PICTURES_DIR") {
+        return Ok(PathBuf::from(pictures).join("Screenshots"));
+    }
+    let home = std::env::var_os("HOME").ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "HOME is not set; cannot find screenshot directory",
+        )
+    })?;
+    Ok(PathBuf::from(home).join("Pictures").join("Screenshots"))
 }
 
 fn key_symbol(code: usize, minimum: u8, columns: usize, symbols: &[u32]) -> u32 {
