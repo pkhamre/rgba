@@ -39,6 +39,29 @@ cd rgba-vVERSION-x86_64-unknown-linux-musl
 ./rgba --bios /path/to/bios.bin --rom /path/to/game.gba
 ```
 
+To install the binary for your user, copy it to `$HOME/bin`:
+
+```sh
+mkdir -p "$HOME/bin"
+install -m 755 rgba "$HOME/bin/rgba"
+```
+
+Add `$HOME/bin` to `PATH` so you can run `rgba` from any directory. For Bash,
+add this line to `~/.bashrc`:
+
+```sh
+export PATH="$HOME/bin:$PATH"
+```
+
+For fish, run this once:
+
+```fish
+fish_add_path $HOME/bin
+```
+
+Open a new shell (or reload `~/.bashrc` in Bash with `source ~/.bashrc`). Then
+run rgba by name, for example `rgba --bios /path/to/bios.bin --rom /path/to/game.gba`.
+
 Run rgba in an X11/XWayland graphical session. For audio, install at least one of
 `pw-cat` (PipeWire), `pacat` (PulseAudio), or `aplay` (ALSA). By default rgba tries
 them in that order. If no player or audio device is available, rgba warns you
