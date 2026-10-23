@@ -43,6 +43,17 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: sh scripts/package-linux.sh "$RELEASE_TAG"
+      - name: Install appimagetool
+        run: |
+          curl --fail --location --retry 3 \\
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage \\
+            --output "$RUNNER_TEMP/appimagetool"
+          chmod +x "$RUNNER_TEMP/appimagetool"
+      - name: Build AppImage
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          APPIMAGETOOL: ${{ runner.temp }}/appimagetool
+        run: sh scripts/package-appimage.sh "$RELEASE_TAG"
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -54,4 +65,4 @@ jobs:
           if [[ "$RELEASE_TAG" == *-* ]]; then
             args+=(--prerelease --latest=false)
           fi
-          gh release create "$RELEASE_TAG" artifacts/release/*.tar.gz artifacts/release/*.sha256 "${args[@]}"
+          gh release create "$RELEASE_TAG" artifacts/release/*.tar.gz artifacts/release/*.AppImage artifacts/release/*.sha256 "${args[@]}"

@@ -180,9 +180,10 @@ and audio on real devices still need testing.
 [The release workflow](.github/workflows/release.yml) runs the standard checks
 and release-mode tests when a `v*` tag is pushed. It then builds the x86_64 musl
 desktop binary, runs its asset-free `--help` check, and publishes a GitHub Release
-with the archive and checksum. The archive contains `rgba`, this README, the
-MIT license, documentation, and third-party notices. No game/BIOS images or saves
-are packaged. Tags containing a hyphen, such as `v0.1.0-rc.1`, become prereleases.
+with the archive, AppImage, and their checksums. The archive contains `rgba`,
+this README, the MIT license, documentation, and third-party notices. The
+AppImage contains the desktop binary and launch metadata. No game/BIOS images or
+saves are packaged. Tags containing a hyphen, such as `v0.1.0-rc.1`, become prereleases.
 
 After the project is on GitHub, push an annotated tag to its GitHub remote
 (replace the example remote name `origin` if needed):
@@ -197,14 +198,18 @@ Enable GitHub Actions and allow the workflow's token to create releases
 Use a new tag for each release; the workflow won't replace existing releases
 or their assets.
 
-To build the same package locally, install the target and run:
+To build locally, install the target and run:
 
 ```sh
 rustup target add x86_64-unknown-linux-musl
 sh scripts/package-linux.sh v0.1.0
+APPIMAGETOOL=/path/to/appimagetool sh scripts/package-appimage.sh v0.1.0
 ```
 
-The archive and checksum go in `artifacts/release/`. The workflow still needs
+`appimagetool` must be installed locally or specified with `APPIMAGETOOL`. The
+tarball, AppImage, and SHA-256 checksums go in `artifacts/release/`. Audio
+playback still uses host-installed `pw-cat`, `pacat`, or `aplay`; use `--audio
+off` when none is available. The workflow still needs
 an end-to-end run on GitHub to verify the hosted build and release upload.
 
 ## Development and documentation
