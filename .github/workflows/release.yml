@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@1.90.0
@@ -33,7 +33,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@1.90.0
@@ -45,8 +45,8 @@ jobs:
         run: sh scripts/package-linux.sh "$RELEASE_TAG"
       - name: Install appimagetool
         run: |
-          curl --fail --location --retry 3 \\
-            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage \\
+          curl --fail --location --retry 3 \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage \
             --output "$RUNNER_TEMP/appimagetool"
           chmod +x "$RUNNER_TEMP/appimagetool"
       - name: Build AppImage
