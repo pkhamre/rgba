@@ -191,7 +191,7 @@ an end-to-end run on GitHub to verify the hosted build and release upload.
 - `crates/gba-desktop`: X11 presentation, input, menus, library, and pacing.
 - `crates/gba-headless`: bounded CLI runner and end-to-end tests. Run
   `sh scripts/cargo.sh run --release -p gba-headless -- --help` for options.
-- [Plan](PLAN.md) and [progress](docs/PROGRESS.md): milestones and outstanding work.
+- [Progress](docs/PROGRESS.md): milestones and outstanding work.
 - [Accuracy](docs/ACCURACY.md), [testing](docs/TESTING.md), and
   [validation](docs/VALIDATION.md): implemented behavior, evidence, and known failures.
 - [Test-build guide](docs/TEST_BUILD.md): launch options and persistence details.
