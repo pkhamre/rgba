@@ -577,10 +577,7 @@ fn run_window(
         }
         let samples = session.machine_mut().take_audio();
         if let Some(output) = &mut audio {
-            if let Err(error) = output.set_speed(speed.multiplier()) {
-                eprintln!("Audio speed change failed: {error}; keeping prior audio speed");
-            }
-            output.set_muted(paused || menu_open || fast);
+            output.set_muted(paused || menu_open || fast || speed != Speed::One);
             output.submit(samples);
         }
         let presentation_started = Instant::now();

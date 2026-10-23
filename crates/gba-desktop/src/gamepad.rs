@@ -608,11 +608,11 @@ mod tests {
             decode_settings(&encode_settings(
                 &keyboard,
                 &GamepadBindings::default(),
-                Speed::Sixteen
+                Speed::Eight
             ))
             .expect("speed settings are valid")
             .2,
-            Speed::Sixteen
+            Speed::Eight
         );
         let invalid = format!("{}gba-speed-v1\n3\n", keyboard.encode());
         assert!(decode_settings(&invalid).is_err());

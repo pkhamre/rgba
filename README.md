@@ -27,13 +27,13 @@ extension and wraps longer names. To launch a ROM directly instead:
 
 Controls: arrows/WASD = D-pad; Z/X = A/B; Enter = Start; Backspace = Select;
 Q/E = L/R. Space pauses; Tab temporarily fast-forwards without limit. In the
-Escape options menu, select Speed for 1x/2x/4x/8x/16x pacing; the selection is
-saved per game, and releasing Tab returns to it. Fixed-speed audio plays faster
-and higher-pitched; Tab stays muted. F5 flushes the cartridge save, F6/F7
-save/load a machine state, and F12 captures a PPM screenshot. Escape opens the
-options menu; choose Back to Library to switch
+Escape options menu, select Speed for 1x/2x/4x/8x pacing; the selection is saved
+per game, and releasing Tab returns to it. Audio is muted above 1x. F5 flushes
+the cartridge save, F6/F7 save/load a machine state, and F12 captures a PPM
+screenshot. Escape opens the options menu; choose Back to Library to switch
 games after flushing the cartridge save, or Exit to quit. The menu configures
-bindings. State saves and loads show a brief on-screen result notice.
+bindings. State saves and
+loads show a brief on-screen result notice.
 Hold Tab through boot/intro if desired; use Enter at the title and Z to confirm.
 
 USB gamepads are detected through Linux evdev when the emulator starts, and
@@ -70,9 +70,9 @@ It runs 4,000 frames with scripted input and writes a screenshot under
 
 Audio uses an installed `pw-cat`, `pacat`, or `aplay` client. Select
 `--audio pipewire|pulse|alsa`, or use `--audio off`. Missing audio devices/tools
-produce a terminal warning; gameplay still runs. Pause and Tab fast-forward
-mute new audio; fixed speeds above 1x play higher-pitched audio. See
-[docs/AUDIO.md](docs/AUDIO.md) for setup and accuracy limits.
+produce a terminal warning; gameplay still runs. Pause/fast-forward and speeds
+above 1x mute new audio output. See [docs/AUDIO.md](docs/AUDIO.md) for setup and
+accuracy limits.
 
 A 32-minute automated real-time desktop soak passed. This used a virtual
 display/null audio sink, not a human listening session. Save-cycle and desktop

@@ -12,12 +12,10 @@ pub(crate) enum Speed {
     Two = 2,
     Four = 4,
     Eight = 8,
-    Sixteen = 16,
 }
 
 impl Speed {
-    pub(crate) const ALL: [Self; 5] =
-        [Self::One, Self::Two, Self::Four, Self::Eight, Self::Sixteen];
+    pub(crate) const ALL: [Self; 4] = [Self::One, Self::Two, Self::Four, Self::Eight];
 
     pub(crate) const fn multiplier(self) -> u32 {
         self as u32
@@ -29,7 +27,6 @@ impl Speed {
             Self::Two => "2X",
             Self::Four => "4X",
             Self::Eight => "8X",
-            Self::Sixteen => "16X",
         }
     }
 
@@ -43,9 +40,8 @@ impl Speed {
             "2" => Ok(Self::Two),
             "4" => Ok(Self::Four),
             "8" => Ok(Self::Eight),
-            "16" => Ok(Self::Sixteen),
             _ => Err(format!(
-                "unsupported speed {value:?}; expected 1, 2, 4, 8, or 16"
+                "unsupported speed {value:?}; expected 1, 2, 4, or 8"
             )),
         }
     }
@@ -57,13 +53,12 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn supports_only_the_five_configured_multipliers() {
-        assert_eq!(Speed::ALL.map(Speed::multiplier), [1, 2, 4, 8, 16]);
+    fn supports_only_the_four_configured_multipliers() {
+        assert_eq!(Speed::ALL.map(Speed::multiplier), [1, 2, 4, 8]);
         assert_eq!(Speed::One.interval(), Duration::from_nanos(16_742_706));
         assert_eq!(Speed::Two.interval(), Duration::from_nanos(8_371_353));
         assert_eq!(Speed::Four.interval(), Duration::from_nanos(4_185_676));
         assert_eq!(Speed::Eight.interval(), Duration::from_nanos(2_092_838));
-        assert_eq!(Speed::Sixteen.interval(), Duration::from_nanos(1_046_419));
         for speed in Speed::ALL {
             assert_eq!(Speed::parse(&speed.multiplier().to_string()), Ok(speed));
         }

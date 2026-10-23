@@ -22,12 +22,7 @@ No third-party emulator/audio core is used.
 Synthetic checks cover FIFO byte ordering/sign/reset/capacity, timer/DMA
 requests, exact sample counts, bounded queues, deterministic clock partitioning,
 length expiry, envelopes, wave bank access, noise shifts and sweep overflow.
-These checks do not establish physical sound fidelity. Fixed-speed desktop
-modes 2x/4x/8x/16x average each group of N adjacent stereo PCM frames into one
-host frame. This compresses playback time and raises pitch by N while keeping
-output at 32,768 frames/sec and avoiding device-rate changes. The box-average
-filter is intentionally simple; high-speed audio can sound dull or aliased and
-needs speaker listening tests. Tab fast-forward remains muted.
+These checks do not establish physical sound fidelity.
 
 Known approximations: fixed 32,768 Hz host output even when SOUNDBIAS requests
 higher PWM rates; no analog PWM reconstruction; wave RAM uses indexed banks,
@@ -53,11 +48,9 @@ A worker applies host-side DC filtering and writes signed-16 stereo PCM:
   frames are bounded; full queues reject output rather than block guest timing.
 - 80 ms device latency is requested, not guaranteed. Pulse also requests 20 ms
   processing intervals. Normal desktop packets contain about 549 frames.
-- Pause and Tab fast-forward mute new output; selected 2x/4x/8x/16x modes play
-  reduced, higher-pitched PCM. Speed changes reset the reducer phase and stale
-  queue epoch; return to 1x emits every generated frame again. Device output
-  remains 32,768 Hz. Shutdown stops/reaps the player and bounds waiting for its
-  writer thread.
+- Pause, Tab fast-forward, and selected speeds above 1x mute new output; existing
+  device buffers drain. Returning to 1x re-primes the audio reserve. Shutdown
+  stops/reaps the player and bounds waiting for its writer thread.
 
 The initial two-packet ceiling dropped 16,458 frames in a 600-frame Pulse-null
 run (51,022 with a smaller process interval). Eight packets removed drops in

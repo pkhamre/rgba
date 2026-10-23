@@ -10,7 +10,7 @@ sh scripts/check.sh
 sh scripts/cargo.sh test --workspace --release
 ```
 
-Current standard result: **176 Rust unit/integration tests, one doctest, and 23
+Current standard result: **174 Rust unit/integration tests, one doctest, and 23
 Python tool tests pass**. Two ignored optional tests require reference assets.
 An additional ignored presentation test requires a dedicated Xvfb display.
 The standard tests use synthetic data only; CI needs no BIOS/game/test ROM.
@@ -160,7 +160,7 @@ A 6,000-frame `scripts/validate_desktop.py` run passed under Xvfb at scale 3
 save/load/resume, duplicate binding rejection, keybinding persistence across
 launches, F6/F7 success/failure notices, and explicit Exit. The disposable
 cartridge save was unchanged on both exits. The validator now also cycles
-1x/2x/4x/8x/16x and checks persistence plus 1x reload; that new path has not been
+1x/2x/4x/8x and checks persistence plus 1x reload; that new path has not been
 run here because Xvfb is unavailable. Audio was off; this result does not
 validate a playback device. A separate virtual-X-server run compared captured
 paused-window RGB bytes against the core screenshot. A separate Xvfb run with

@@ -29,10 +29,9 @@ sh scripts/cargo.sh run --release -p gba-desktop -- \
 
 Arrows/WASD: D-pad. Z: A. X: B. Enter: Start. Backspace: Select. Q: L. E: R.
 Space: pause. Hold Tab: temporary unlimited fast-forward; release returns to
-the selected speed. Choose Speed in the Escape options menu for
-1x/2x/4x/8x/16x pacing. The selected multiplier is persisted per game. Fixed-speed
-audio plays faster and higher-pitched; Tab remains muted. F5: flush cartridge
-save. F6/F7: save/load a machine state. F12: screenshot
+the selected speed. Choose Speed in the Escape options menu for 1x/2x/4x/8x
+pacing. The selected multiplier is persisted per game. Audio is muted above 1x.
+F5: flush cartridge save. F6/F7: save/load a machine state. F12: screenshot
 under `artifacts/` (binary PPM, never overwrite).
 The launcher looks for `$XDG_DATA_HOME/rgba/bios.bin` (default
 `~/.local/share/rgba/bios.bin`); `RGBA_BIOS` or `--bios PATH` overrides it. A

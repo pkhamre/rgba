@@ -176,14 +176,14 @@ def validate(args):
                     for _ in range(4):display.tap(0xff54)
                     display.tap(0xff0d)
                     speed_settings=[]
-                    for speed_index, value in enumerate(("2", "4", "8", "16", "1")):
+                    for speed_index, value in enumerate(("2", "4", "8", "1")):
                         display.tap(0xff54);display.tap(0xff0d);time.sleep(.15)
                         label=f"[{value}X]".encode()
                         if label not in display.title():raise AssertionError(f"speed title missing {label!r}")
                         expected=f"gba-speed-v1\n{value}\n"
                         if expected not in settings_path.read_text():raise AssertionError(f"speed setting {value} was not persisted")
                         speed_settings.append(value)
-                        if speed_index < 4:display.tap(0xff0d)
+                        if speed_index < 3:display.tap(0xff0d)
                     display.tap(0xff1b);time.sleep(.2)
                     if b"OPTIONS" in display.title():raise AssertionError("speed test did not resume gameplay")
                     menu_tested=True;report["options_save_load_resume_tested"]=True
