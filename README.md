@@ -1,13 +1,13 @@
 # rgba
 
-A Game Boy Advance emulator written from scratch in Rust for Linux. rgba has
-its own ARM7TDMI interpreter, hardware models, and software renderer; it does
-not use another emulator as a backend.
+rgba is a Game Boy Advance emulator written from scratch in Rust for Linux,
+with its own ARM7TDMI interpreter, hardware models, and software renderer.
+It does not use another emulator as a backend.
 
-This is an experimental desktop preview. BIOS boot, Pokémon Emerald's first
-battle, and in-game save/restart/Continue have been exercised. Full-game
-compatibility and hardware accuracy remain unverified. Independent CPU
-reference comparisons still have known failures; see
+This is an experimental desktop preview. Testing has covered BIOS boot,
+Pokémon Emerald's first battle, and saving in-game, restarting, and choosing
+Continue. Full-game compatibility and hardware accuracy are still unverified.
+Some independent CPU reference comparisons fail; see
 [accuracy and limitations](docs/ACCURACY.md) and [validation](docs/VALIDATION.md).
 
 ## Features
@@ -20,15 +20,15 @@ reference comparisons still have known failures; see
 - Menu-selectable 1x/2x/4x/8x speed and temporary unlimited fast-forward.
 - A separate headless runner for bounded execution, screenshots, and traces.
 
-No BIOS or game images are included. Supply your own lawfully obtained images.
+You'll need your own lawfully obtained BIOS and game images; none are included.
 
 ## Download and run
 
-Tagged GitHub Releases provide an x86_64 Linux desktop archive named
+Each tagged GitHub Release includes an x86_64 Linux desktop archive named
 `rgba-vVERSION-x86_64-unknown-linux-musl.tar.gz` and a SHA-256 checksum file.
-Open this repository's **Releases** page and download both files for the version
-you want. The binary is built with musl to avoid a glibc-version dependency.
-ARM64, Windows, and macOS binaries are not provided.
+Download both files from this repository's Releases page. The binary uses musl,
+so it doesn't depend on a particular glibc version. There are no ARM64, Windows,
+or macOS binaries.
 
 From the download directory, replacing `vVERSION` with the downloaded version:
 
@@ -39,11 +39,11 @@ cd rgba-vVERSION-x86_64-unknown-linux-musl
 ./rgba --bios /path/to/bios.bin --rom /path/to/game.gba
 ```
 
-Run from an X11/XWayland graphical session. For audio, install at least one of
+Run rgba in an X11/XWayland graphical session. For audio, install at least one of
 `pw-cat` (PipeWire), `pacat` (PulseAudio), or `aplay` (ALSA). By default rgba tries
-them in that order. Missing audio tools/devices produce a warning; the game
-still runs. Use `--audio pipewire|pulse|alsa` to select a player or `--audio off`
-to disable audio. See [audio setup and limitations](docs/AUDIO.md).
+them in that order. If no player or audio device is available, rgba warns you
+and keeps running. Use `--audio pipewire|pulse|alsa` to select a player or
+`--audio off` to disable audio. See [audio setup and limitations](docs/AUDIO.md).
 
 The desktop binary requires `--bios PATH`. To use the game library, omit
 `--rom` and put `.gba`, `.agb`, or `.bin` files directly in
@@ -53,13 +53,14 @@ The desktop binary requires `--bios PATH`. To use the game library, omit
 ./rgba --bios "$HOME/.local/share/rgba/bios.bin"
 ```
 
-The only game starts automatically; multiple games open a chooser showing ROM
-filenames. Use Up/Down to select, Enter to launch, and Escape to exit.
+If the library has one game, it starts automatically. With multiple games,
+you'll see a chooser showing the ROM filenames. Use Up/Down to select, Enter to
+launch, and Escape to exit.
 `./rgba --help` lists command-line options without needing a display or images.
 
 ## Controls
 
-These are the default keyboard bindings; change them in the Escape options menu.
+You can change these default keyboard bindings in the Escape options menu.
 
 | Action | Key |
 | --- | --- |
@@ -74,14 +75,15 @@ These are the default keyboard bindings; change them in the Escape options menu.
 | Capture PPM screenshot | F12 |
 | Open / close options | Escape |
 
-Choose Speed in the options menu for 1x, 2x, 4x, or 8x pacing. The choice is saved
-per game. Releasing Tab returns to that speed. Audio is muted while paused,
-during fast-forward, and above 1x. Speed changes affect host pacing, not guest
-clocks, and do not skip emulated frames. Higher multipliers depend on host performance.
+Choose Speed in the options menu to set 1x, 2x, 4x, or 8x pacing. rgba saves
+that choice per game. Releasing Tab returns to the saved speed. Audio is muted
+while paused, during fast-forward, and above 1x. Speed changes adjust host pacing without changing
+guest clocks or skipping emulated frames. Your computer may not reach the higher
+multipliers.
 
-The options menu also provides Back to Library and Exit, both of which flush
-the cartridge save. State save/load results appear on screen. Screenshots are
-written under `artifacts/` without overwriting existing files.
+Back to Library and Exit in the options menu both flush the cartridge save.
+Saving or loading a state shows the result on screen. Screenshots go under
+`artifacts/` without overwriting existing files.
 
 ### Gamepads
 
@@ -102,16 +104,17 @@ and gamepad bindings are separate.
 | Cartridge saves and quick states | `~/.local/share/rgba/` |
 | Per-game settings | `~/.config/rgba/settings/` |
 
-`XDG_DATA_HOME` and `XDG_CONFIG_HOME` override the respective base directories.
-Per-game filenames use the ROM's SHA-256 identity. Existing saves, states, and
-settings beside a ROM are copied on first launch and retained; existing central
-files take precedence. To migrate a ROM outside the library, launch its original
-path once or copy its sidecars alongside it. `--save PATH` overrides the cartridge
+`XDG_DATA_HOME` and `XDG_CONFIG_HOME` override the data and configuration base
+directories. Per-game filenames use the ROM's SHA-256 identity. On first launch,
+rgba copies any saves, states, and settings from beside the ROM to central
+storage, leaving the originals in place. It keeps any files already in central
+storage. To migrate a ROM outside the library, launch its original path once
+or copy its sidecars alongside it. `--save PATH` overrides the cartridge
 save location when using `--rom`.
 
 Use the game's own save menu before relying on a cartridge save. F5 only flushes
 that save to disk; it does not create an emulator state. F6/F7 use a separate
-versioned quick-state file. Loading a state also synchronizes its cartridge
+versioned quick-state file. Loading a state also writes its cartridge
 backup to the configured save file. See [save and RTC policy](docs/TEST_BUILD.md).
 
 ## Build from source
@@ -131,9 +134,9 @@ an untracked `bins/gba_bios.bin` compatibility fallback. Without `--rom`, it
 opens the library. A positional ROM path also works:
 `sh scripts/play.sh path/to/game.gba --scale 2`.
 
-`scripts/cargo.sh` uses Cargo from PATH on normal hosts. Its fallback for an
-isolated `.tools/` toolchain is for minimal development environments; `.tools/`
-and build products are not tracked.
+`scripts/cargo.sh` uses Cargo from PATH when available. In minimal development
+environments, it can fall back to an isolated `.tools/` toolchain. `.tools/`
+and build products stay out of version control.
 
 ### Checks
 
@@ -143,11 +146,11 @@ sh scripts/cargo.sh test --locked --workspace --release
 ```
 
 The standard checks run formatting, Clippy, Rust tests, and Python tooling tests
-without BIOS/game images. They do not establish hardware accuracy. Optional
-asset-backed and desktop checks, including known CPU-reference mismatches and
-ignored tests, are documented in [testing](docs/TESTING.md). A 32-minute automated
-desktop soak passed with a virtual display and null audio sink; varied human
-gameplay and real-device audio validation remain open.
+without BIOS/game images. Passing them does not establish hardware accuracy.
+See [testing](docs/TESTING.md) for optional tests that need images or a desktop,
+known CPU-reference mismatches, and ignored tests. A 32-minute automated desktop
+soak passed using a virtual display and null audio sink. Varied human gameplay
+and audio on real devices still need testing.
 
 ### Tagged releases
 
@@ -166,10 +169,10 @@ git tag -a v0.1.0 -m "rgba v0.1.0"
 git push origin v0.1.0
 ```
 
-GitHub Actions must be enabled, with permission for the workflow's token to
-create releases (`contents: write` on the release job). No separate release
-secret is required. Use a new tag for each release; the workflow does not
-replace existing releases or their assets.
+Enable GitHub Actions and allow the workflow's token to create releases
+(`contents: write` on the release job). You don't need a separate release secret.
+Use a new tag for each release; the workflow won't replace existing releases
+or their assets.
 
 To build the same package locally, install the target and run:
 
@@ -178,8 +181,8 @@ rustup target add x86_64-unknown-linux-musl
 sh scripts/package-linux.sh v0.1.0
 ```
 
-The archive and checksum are written to `artifacts/release/`. GitHub-hosted
-execution and release uploads must be verified after publishing the repository.
+The archive and checksum go in `artifacts/release/`. The workflow still needs
+an end-to-end run on GitHub to verify the hosted build and release upload.
 
 ## Development and documentation
 
@@ -200,5 +203,5 @@ execution and release uploads must be verified after publishing the repository.
 
 Original project code is licensed under the [MIT license](LICENSE).
 Third-party code, dependencies, algorithms, and test material retain their
-respective licenses and notices under [LICENSES/](LICENSES/). BIOS/game images,
-saves, downloaded test assets, and generated traces are excluded from version control.
+own licenses and notices under [LICENSES/](LICENSES/). BIOS/game images, saves,
+downloaded test assets, and generated traces stay out of version control.
