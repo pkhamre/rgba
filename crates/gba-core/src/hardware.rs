@@ -132,10 +132,11 @@ impl Hardware {
             let ticks = if index != 0 && timer.control & 4 != 0 {
                 overflow
             } else {
-                let divisor = [1, 64, 256, 1024][(timer.control & 3) as usize];
+                // Prescalers are powers of two; avoid runtime division on every bus slice.
+                let shift = [0, 6, 8, 10][(timer.control & 3) as usize];
                 timer.phase += cycles;
-                let ticks = timer.phase / divisor;
-                timer.phase %= divisor;
+                let ticks = timer.phase >> shift;
+                timer.phase &= (1u64 << shift) - 1;
                 ticks
             };
             let until_overflow = 0x10000 - u64::from(timer.counter);
@@ -323,6 +324,49 @@ impl Hardware {
 #[cfg(test)]
 mod tests {
     use super::Hardware;
+
+    #[test]
+    fn timer_prescalers_match_division_reference() {
+        let mut hw = Hardware::default();
+        for index in 0..4 {
+            for (prescaler, divisor) in [1u64, 64, 256, 1024].into_iter().enumerate() {
+                // Include phases left by a larger prescaler before a control write.
+                for phase in 0..1024 {
+                    for cycles in [0, 1, 63, 64, 255, 256, 1023, 1024, 65536, 131073] {
+                        for (counter, reload) in [(0u16, 0u16), (0xfffe, 0xfff9), (0xffff, 0xffff)]
+                        {
+                            hw.timers = [super::Timer::default(); 4];
+                            hw.timers[index] = super::Timer {
+                                counter,
+                                reload,
+                                control: 0xc0 | prescaler as u16,
+                                phase,
+                            };
+                            hw.set_half(0x202, 0);
+                            let ticks = (phase + cycles) / divisor;
+                            let until_overflow = 0x10000 - u64::from(counter);
+                            let overflowed = ticks >= until_overflow;
+                            let expected = if overflowed {
+                                let period = 0x10000 - u64::from(reload);
+                                reload.wrapping_add(((ticks - until_overflow) % period) as u16)
+                            } else {
+                                counter.wrapping_add(ticks as u16)
+                            };
+
+                            hw.advance_timers(cycles);
+
+                            assert_eq!(hw.timers[index].counter, expected);
+                            assert_eq!(hw.timers[index].phase, (phase + cycles) % divisor);
+                            assert_eq!(
+                                hw.half(0x202),
+                                if overflowed { 1 << (3 + index) } else { 0 }
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn selected_timer_consumes_real_fifo_bytes_and_requests_dma() {

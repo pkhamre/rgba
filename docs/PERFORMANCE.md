@@ -94,6 +94,30 @@ You can inspect the recording interactively while the same binary still exists:
 perf report -i artifacts/profile-balanced/perf.data
 ```
 
+## Timer prescaler optimization
+
+The supplied laptop Emerald recording (`1800` frames, `120` warm-up frames,
+three repeats) reported a median 19.869469 seconds, about 90.59 frames/sec and
+1.52x real time under perf. `Hardware::advance_timers` accounted for 17.54% of
+self samples. Some recorded call chains contain implausible addresses/parents;
+use the self samples as hotspot evidence, not precise subsystem accounting.
+
+Timer advancement now uses shifts and masks for the power-of-two prescalers
+1, 64, 256 and 1024 instead of runtime division/remainder. Overflow/reload
+arithmetic, cascades and event scheduling are unchanged. A division-reference
+regression covers every timer and prescaler, all snapshot-valid phases (including
+phases retained when changing prescalers), boundary cycle counts, reloads,
+multiple overflows and IRQ flags. Existing cascade and FIFO/DMA regressions
+remain applicable. Validation: `sh scripts/check.sh`, targeted release hardware
+tests and release workspace tests pass. Existing host audio tests still emit
+`sleep: not found` warnings. The optional strict CPU-reference suite was not
+rerun and retains its documented mismatches.
+
+No laptop speedup is established by this change. Rerun the same workload before
+and after without perf, compare clocks/PCM/final state and rendered output, and
+then record a new profile. The supplied profiled timing is not an unprofiled
+baseline; real-asset equivalence and generated-code inspection remain pending.
+
 ## Verified behavior and remaining gaps
 
 Synthetic BIOS/ROM tests exercise repeated state/PCM consistency, scripted input,
