@@ -118,6 +118,30 @@ and after without perf, compare clocks/PCM/final state and rendered output, and
 then record a new profile. The supplied profiled timing is not an unprofiled
 baseline; real-asset equivalence and generated-code inspection remain pending.
 
+## Scanline configuration decoding
+
+The renderer now prepares background controls, text row/scroll coordinates,
+mosaic dimensions, affine steps, map/tile bases, bitmap page selection, window
+bounds/masks and blend coefficients once per scanline. The decoded structures
+are local to `render_line`: no persistent cache, save-state change or register
+write invalidation is involved. Pixel composition, tile fetching, affine
+reference updates and the existing scanline timing model remain unchanged.
+
+Before refactoring, synthetic framebuffer/affine-reference fingerprints were
+captured from the original renderer for 3,072 scanlines across modes 0–7, all
+window enable combinations, varied background controls, mosaic and effects.
+The new renderer matches these fingerprints. A separate comparison retains the
+original window decoder and checks masks at normal, wrapped and equal bounds,
+including WIN0/WIN1 precedence and OBJ/outside masks. Existing semi-transparent
+OBJ and forced-blank tests pass. Fingerprints are regression evidence, not an
+exhaustive equivalence proof or hardware-accuracy validation.
+
+Validation: `sh scripts/check.sh`, targeted release PPU tests and release workspace
+tests pass. Existing host audio `sleep: not found` warnings remain. The optional
+strict CPU-reference suite was not rerun and retains its documented mismatches.
+No real-asset framebuffer/state comparison or laptop speedup is established;
+repeat the same unprofiled Emerald benchmark before/after to measure the effect.
+
 ## Verified behavior and remaining gaps
 
 Synthetic BIOS/ROM tests exercise repeated state/PCM consistency, scripted input,

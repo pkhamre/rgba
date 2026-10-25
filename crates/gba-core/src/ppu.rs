@@ -50,6 +50,122 @@ fn inside(value: usize, start: usize, end: usize) -> bool {
     }
 }
 
+// These values are local to one render call, not persistent caches. Register
+// writes between scanlines therefore need no invalidation or save-state changes.
+struct BackgroundLine {
+    mode: u16,
+    control: u16,
+    mosaic_width: usize,
+    text: bool,
+    affine: bool,
+    width: usize,
+    scroll_x: usize,
+    sy: usize,
+    map_base: usize,
+    tile_base: usize,
+    affine_step: [i32; 2],
+    affine_size: i32,
+    page: usize,
+}
+
+impl BackgroundLine {
+    fn new(bg: usize, y: usize, display: u16, io: &[u8]) -> Self {
+        let mode = display & 7;
+        let control = half(io, 8 + bg * 2);
+        let size = (control >> 14) as usize;
+        let width = if size & 1 != 0 { 512 } else { 256 };
+        let height = if size & 2 != 0 { 512 } else { 256 };
+        let mosaic = control & 0x40 != 0;
+        let mosaic_width = if mosaic {
+            (io[0x4c] as usize & 15) + 1
+        } else {
+            1
+        };
+        let y = if mosaic {
+            y - y % ((io[0x4c] as usize >> 4) + 1)
+        } else {
+            y
+        };
+        let affine_step = if bg >= 2 {
+            [
+                i32::from(half(io, 0x20 + (bg - 2) * 0x10) as i16),
+                i32::from(half(io, 0x24 + (bg - 2) * 0x10) as i16),
+            ]
+        } else {
+            [0; 2]
+        };
+        Self {
+            mode,
+            control,
+            mosaic_width,
+            text: mode == 0 || (mode == 1 && bg < 2),
+            affine: (mode == 1 && bg == 2) || (mode == 2 && bg >= 2),
+            width,
+            scroll_x: (half(io, 0x10 + bg * 4) & 511) as usize,
+            sy: (y + (half(io, 0x12 + bg * 4) & 511) as usize) % height,
+            map_base: ((control >> 8) & 31) as usize * 0x800,
+            tile_base: ((control >> 2) & 3) as usize * 0x4000,
+            affine_step,
+            affine_size: 128 << (control >> 14),
+            page: if mode != 3 && display & 0x10 != 0 {
+                0xa000
+            } else {
+                0
+            },
+        }
+    }
+}
+
+struct WindowLine {
+    active: [bool; 2],
+    horizontal: [u16; 2],
+    masks: [u16; 2],
+    outside: u16,
+    object: u16,
+    enabled: bool,
+    object_enabled: bool,
+}
+
+impl WindowLine {
+    fn new(y: usize, display: u16, io: &[u8]) -> Self {
+        let active = std::array::from_fn(|window| {
+            let vertical = half(io, 0x44 + window * 2);
+            display & (0x2000 << window) != 0
+                && inside(y, (vertical >> 8) as usize, (vertical & 255) as usize)
+        });
+        let masks = half(io, 0x48);
+        let outside = half(io, 0x4a);
+        Self {
+            active,
+            horizontal: [half(io, 0x40), half(io, 0x42)],
+            masks: [masks & 0x3f, (masks >> 8) & 0x3f],
+            outside: outside & 0x3f,
+            object: (outside >> 8) & 0x3f,
+            enabled: display & 0xe000 != 0,
+            object_enabled: display & 0x8000 != 0,
+        }
+    }
+
+    fn mask(&self, x: usize, object: bool) -> u16 {
+        if !self.enabled {
+            return 0x3f;
+        }
+        for window in 0..2 {
+            let horizontal = self.horizontal[window];
+            if self.active[window]
+                && inside(x, (horizontal >> 8) as usize, (horizontal & 255) as usize)
+            {
+                return self.masks[window];
+            }
+        }
+        if object && self.object_enabled {
+            self.object
+        } else {
+            self.outside
+        }
+    }
+}
+
 impl Ppu {
     pub(crate) fn io_written(&mut self, io: &[u8], offset: usize) {
         for bg in 0..2 {
@@ -93,15 +209,24 @@ impl Ppu {
             if display & 0x9000 != 0 {
                 Self::objects(y, io, palette, vram, oam, &mut objects, &mut object_window);
             }
+            let backgrounds: [BackgroundLine; 4] =
+                std::array::from_fn(|bg| BackgroundLine::new(bg, y, display, io));
+            let windows = WindowLine::new(y, display, io);
+            let blend = half(io, 0x50);
+            let effect = (blend >> 6) & 3;
+            let alpha = half(io, 0x52);
+            let eva = (alpha & 31).min(16);
+            let evb = ((alpha >> 8) & 31).min(16);
+            let brightness = (half(io, 0x54) & 31).min(16);
             for x in 0..240 {
-                let mask = Self::window_mask(x, y, io, object_window[x]);
+                let mask = windows.mask(x, object_window[x]);
                 let mut top = backdrop;
                 let mut below = None;
-                for bg in 0..4 {
+                for (bg, background) in backgrounds.iter().enumerate() {
                     if display & (0x100 << bg) == 0 || mask & (1 << bg) == 0 {
                         continue;
                     }
-                    if let Some(pixel) = self.background(bg, x, y, io, palette, vram) {
+                    if let Some(pixel) = self.background(bg, x, background, palette, vram) {
                         Self::insert_layer(pixel, &mut top, &mut below);
                     }
                 }
@@ -113,23 +238,15 @@ impl Ppu {
                 }
                 let below = below.unwrap_or(backdrop);
                 let mut color = top.color;
-                let blend = half(io, 0x50);
                 let first = blend & (1 << top.layer) != 0;
                 let second = blend & (1 << (8 + below.layer)) != 0;
-                let effect = (blend >> 6) & 3;
                 let effects_enabled = mask & 0x20 != 0;
                 // Semi-transparent OBJs force alpha blending even when the window
                 // disables ordinary color effects. They still need a second target.
                 if (top.semi || (effects_enabled && effect == 1 && first)) && second {
-                    color = Self::mix(
-                        top.color,
-                        below.color,
-                        (half(io, 0x52) & 31).min(16),
-                        ((half(io, 0x52) >> 8) & 31).min(16),
-                    );
+                    color = Self::mix(top.color, below.color, eva, evb);
                 } else if effects_enabled && first && (effect == 2 || effect == 3) {
-                    let amount = (half(io, 0x54) & 31).min(16);
-                    color = Self::brightness(color, amount, effect == 2);
+                    color = Self::brightness(color, brightness, effect == 2);
                 }
                 self.pixels[y * 240 + x] = Self::rgb(color);
             }
@@ -157,57 +274,24 @@ impl Ppu {
         }
     }
 
-    fn window_mask(x: usize, y: usize, io: &[u8], object: bool) -> u16 {
-        let display = half(io, 0);
-        if display & 0xe000 == 0 {
-            return 0x3f;
-        }
-        for window in 0..2 {
-            if display & (0x2000 << window) == 0 {
-                continue;
-            }
-            let horizontal = half(io, 0x40 + window * 2);
-            let vertical = half(io, 0x44 + window * 2);
-            if inside(x, (horizontal >> 8) as usize, (horizontal & 255) as usize)
-                && inside(y, (vertical >> 8) as usize, (vertical & 255) as usize)
-            {
-                return (half(io, 0x48) >> (window * 8)) & 0x3f;
-            }
-        }
-        if object && display & 0x8000 != 0 {
-            half(io, 0x4a) >> 8 & 0x3f
-        } else {
-            half(io, 0x4a) & 0x3f
-        }
-    }
-
     fn background(
         &self,
         bg: usize,
         mut x: usize,
-        mut y: usize,
-        io: &[u8],
+        line: &BackgroundLine,
         palette: &[u8],
         vram: &[u8],
     ) -> Option<Pixel> {
-        let mode = half(io, 0) & 7;
-        let control = half(io, 8 + bg * 2);
-        if control & 0x40 != 0 {
-            x -= x % ((io[0x4c] as usize & 15) + 1);
-            y -= y % ((io[0x4c] as usize >> 4) + 1);
+        let mode = line.mode;
+        let control = line.control;
+        if line.mosaic_width != 1 {
+            x -= x % line.mosaic_width;
         }
-        let text = mode == 0 || (mode == 1 && bg < 2);
-        let affine = (mode == 1 && bg == 2) || (mode == 2 && bg >= 2);
-        let color = if text {
-            let size = (control >> 14) as usize;
-            let width = if size & 1 != 0 { 512 } else { 256 };
-            let height = if size & 2 != 0 { 512 } else { 256 };
-            let sx = (x + (half(io, 0x10 + bg * 4) & 511) as usize) % width;
-            let sy = (y + (half(io, 0x12 + bg * 4) & 511) as usize) % height;
-            let block = sx / 256 + (sy / 256) * (width / 256);
-            let map = ((control >> 8) & 31) as usize * 0x800
-                + block * 0x800
-                + (((sy % 256) / 8) * 32 + (sx % 256) / 8) * 2;
+        let color = if line.text {
+            let sx = (x + line.scroll_x) % line.width;
+            let sy = line.sy;
+            let block = sx / 256 + (sy / 256) * (line.width / 256);
+            let map = line.map_base + block * 0x800 + (((sy % 256) / 8) * 32 + (sx % 256) / 8) * 2;
             let entry = half(vram, map & 0xffff);
             let px = if entry & 0x400 != 0 {
                 7 - sx % 8
@@ -219,7 +303,7 @@ impl Ppu {
             } else {
                 sy % 8
             };
-            let base = ((control >> 2) & 3) as usize * 0x4000;
+            let base = line.tile_base;
             let (index, bank) = if control & 0x80 != 0 {
                 (
                     vram[(base + (entry & 0x3ff) as usize * 64 + py * 8 + px) & 0xffff] as usize,
@@ -236,25 +320,24 @@ impl Ppu {
                 return None;
             }
             half(palette, (index + bank) * 2)
-        } else if affine || ((3..=5).contains(&mode) && bg == 2) {
+        } else if line.affine || ((3..=5).contains(&mode) && bg == 2) {
             let affine_index = bg - 2;
-            let pa = i32::from(half(io, 0x20 + affine_index * 0x10) as i16);
-            let pc = i32::from(half(io, 0x24 + affine_index * 0x10) as i16);
+            let [pa, pc] = line.affine_step;
             let mut sx = (self.reference[affine_index][0] + pa * x as i32) >> 8;
             let mut sy = (self.reference[affine_index][1] + pc * x as i32) >> 8;
-            if affine {
-                let size = 128 << (control >> 14);
+            if line.affine {
+                let size = line.affine_size;
                 if control & 0x2000 != 0 {
                     sx = sx.rem_euclid(size);
                     sy = sy.rem_euclid(size);
                 } else if sx < 0 || sy < 0 || sx >= size || sy >= size {
                     return None;
                 }
-                let map = ((control >> 8) & 31) as usize * 0x800;
+                let map = line.map_base;
                 let tile = vram
                     [(map + (sy as usize / 8) * (size as usize / 8) + sx as usize / 8) & 0xffff]
                     as usize;
-                let base = ((control >> 2) & 3) as usize * 0x4000;
+                let base = line.tile_base;
                 let index =
                     vram[(base + tile * 64 + (sy as usize & 7) * 8 + (sx as usize & 7)) & 0xffff];
                 if index == 0 {
@@ -266,11 +349,7 @@ impl Ppu {
                 if sx < 0 || sy < 0 || sx >= width || sy >= height {
                     return None;
                 }
-                let page = if mode != 3 && half(io, 0) & 0x10 != 0 {
-                    0xa000
-                } else {
-                    0
-                };
+                let page = line.page;
                 let offset = sy as usize * width as usize + sx as usize;
                 if mode == 4 {
                     half(palette, vram[page + offset] as usize * 2)
@@ -438,6 +517,125 @@ impl Ppu {
 #[cfg(test)]
 mod tests {
     use super::Ppu;
+
+    #[test]
+    fn scanlines_match_original_renderer_fingerprints() {
+        // Fingerprints captured before scanline configuration decoding was introduced.
+        // Exercise every mode (including unsupported modes), window enable combination,
+        // background size/depth/flip, mosaic, affine clipping/wrapping and color effect.
+        let mut seed = 0x9852_147bu32;
+        let mut random_byte = || {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            (seed >> 24) as u8
+        };
+        let mut palette = [0; 0x400];
+        let mut vram = vec![0; 0x18000];
+        let mut oam = [0; 0x400];
+        for bytes in [&mut palette[..], &mut vram[..], &mut oam[..]] {
+            for byte in bytes {
+                *byte = random_byte();
+            }
+        }
+        for mode in 0..8 {
+            let mut hash = 0xcbf2_9ce4_8422_2325u64;
+            for case in 0..128 {
+                let mut io = [0; 0x400];
+                for byte in &mut io {
+                    *byte = random_byte();
+                }
+                io[0] = mode | if case & 1 != 0 { 0x10 } else { 0 };
+                io[1] = 0x1f | ((case & 7) << 5);
+                // Keep affine samples visible as well as testing negative/outside coordinates.
+                for bg in 0..2 {
+                    let base = 0x20 + bg * 0x10;
+                    for (offset, value) in [(0, 256i16), (2, -128), (4, 64), (6, 256)] {
+                        io[base + offset..base + offset + 2].copy_from_slice(&value.to_le_bytes());
+                    }
+                    for axis in 0..2 {
+                        let value = (i32::from(case) - 32) * 256;
+                        let offset = base + 8 + axis * 4;
+                        io[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+                    }
+                }
+                let mut ppu = Ppu::default();
+                for y in [0, 79, 159] {
+                    ppu.render_line(y, &io, &palette, &vram, &oam);
+                    for pixel in &ppu.pixels[y * 240..(y + 1) * 240] {
+                        for byte in pixel.to_le_bytes() {
+                            hash = (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
+                        }
+                    }
+                    for value in ppu.reference.iter().flatten() {
+                        for byte in value.to_le_bytes() {
+                            hash = (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
+                        }
+                    }
+                }
+            }
+            let expected = [
+                0xfa24_0761_ce4d_62c7,
+                0xf266_fbdb_baa6_d740,
+                0x8a35_4798_6e30_b350,
+                0x140c_c83d_0f15_ecd2,
+                0x85f9_062f_23e5_f4a9,
+                0x2c8e_3636_b5a4_02fb,
+                0x78f5_ee7e_c52f_1913,
+                0x06db_b9d3_b5a6_717e,
+            ];
+            assert_eq!(hash, expected[mode as usize], "mode={mode}");
+        }
+    }
+
+    #[test]
+    fn decoded_windows_match_original_masks_at_boundaries() {
+        // Retain the original per-pixel decoder as an independent reference.
+        fn original_mask(x: usize, y: usize, io: &[u8], object: bool) -> u16 {
+            let display = super::half(io, 0);
+            if display & 0xe000 == 0 {
+                return 0x3f;
+            }
+            for window in 0..2 {
+                if display & (0x2000 << window) == 0 {
+                    continue;
+                }
+                let horizontal = super::half(io, 0x40 + window * 2);
+                let vertical = super::half(io, 0x44 + window * 2);
+                if super::inside(x, (horizontal >> 8) as usize, (horizontal & 255) as usize)
+                    && super::inside(y, (vertical >> 8) as usize, (vertical & 255) as usize)
+                {
+                    return (super::half(io, 0x48) >> (window * 8)) & 0x3f;
+                }
+            }
+            if object && display & 0x8000 != 0 {
+                super::half(io, 0x4a) >> 8 & 0x3f
+            } else {
+                super::half(io, 0x4a) & 0x3f
+            }
+        }
+
+        let mut io = [0; 0x400];
+        io[0x48..0x4c].copy_from_slice(&[0x12, 0x34, 0x25, 0x1a]);
+        for start in [0, 1, 79, 159, 239, 240, 255] {
+            for end in [0, 1, 79, 159, 239, 240, 255] {
+                io[0x40..0x48].copy_from_slice(&[end, start, start, end, start, end, end, start]);
+                for enabled in 0..8 {
+                    io[1] = enabled << 5;
+                    for y in [0, 79, 159, 255] {
+                        let windows = super::WindowLine::new(y, super::half(&io, 0), &io);
+                        for x in 0..256 {
+                            for object in [false, true] {
+                                assert_eq!(
+                                    windows.mask(x, object),
+                                    original_mask(x, y, &io, object),
+                                    "start={start}, end={end}, enabled={enabled}, x={x}, y={y}, object={object}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn selecting_front_two_layers_matches_stable_full_sort_including_ties() {
