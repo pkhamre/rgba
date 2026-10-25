@@ -133,10 +133,7 @@ impl Bus {
                 AccessWidth::Word => byte * 0x0101_0101,
             });
         }
-        let mut value = 0;
-        for index in 0..width.bytes() {
-            value |= u32::from(self.read_byte(address + index)) << (index * 8);
-        }
+        let value = self.read_memory(address, width);
         self.open_bus = match width {
             AccessWidth::Byte => value * 0x0101_0101,
             AccessWidth::Halfword => value | (value << 16),
@@ -252,6 +249,45 @@ impl Bus {
         } else {
             offset
         }
+    }
+
+    fn read_memory(&self, address: u32, width: AccessWidth) -> u32 {
+        // The caller aligns transactions. RAM mirrors and VRAM's split are all
+        // word-aligned, so a transaction cannot straddle their boundaries.
+        let memory = match address >> 24 {
+            2 => Some((&self.external_ram[..], (address & 0x3ffff) as usize)),
+            3 => Some((&self.internal_ram[..], (address & 0x7fff) as usize)),
+            5 => Some((&self.palette[..], (address & 0x3ff) as usize)),
+            6 => Some((&self.video_ram[..], Self::video_offset(address))),
+            7 => Some((&self.object_ram[..], (address & 0x3ff) as usize)),
+            8..=13 => {
+                let offset = (address & 0x01ff_ffff) as usize;
+                // Reserve the whole GPIO-containing words, including the word
+                // at 0xc8 that mixes the control halfword with ordinary ROM.
+                if (0xc4..0xcc).contains(&offset) {
+                    None
+                } else {
+                    Some((&self.rom[..], offset))
+                }
+            }
+            _ => None,
+        };
+        if let Some((bytes, offset)) = memory
+            && let Some(bytes) = bytes.get(offset..offset + width.bytes() as usize)
+        {
+            return match width {
+                AccessWidth::Byte => u32::from(bytes[0]),
+                AccessWidth::Halfword => u32::from(u16::from_le_bytes([bytes[0], bytes[1]])),
+                AccessWidth::Word => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+            };
+        }
+        // Keep BIOS protection, GPIO, open bus and partially/out-of-range ROM
+        // transactions on the original byte-wise path.
+        let mut value = 0;
+        for index in 0..width.bytes() {
+            value |= u32::from(self.read_byte(address + index)) << (index * 8);
+        }
+        value
     }
 
     fn read_byte(&self, address: u32) -> u8 {
@@ -542,6 +578,130 @@ mod tests {
     fn write(bus: &mut Bus, address: u32, width: AccessWidth, value: u32) {
         bus.write(address, width, value, AccessKind::Nonsequential)
             .expect("implemented memory");
+    }
+
+    // Preserve the original transaction implementation as an independent oracle
+    // for returned data, latches, waitstates and all hardware advancement effects.
+    fn original_read(
+        bus: &mut Bus,
+        address: u32,
+        width: AccessWidth,
+        kind: AccessKind,
+    ) -> Result<u32, EmulatorError> {
+        let address = address & !(width.bytes() - 1);
+        bus.advance(bus.access_cycles(address, width, kind));
+        if address >> 24 == 4 {
+            return bus.read_io(address, width);
+        }
+        if matches!(address >> 24, 0x0e | 0x0f) {
+            let byte = u32::from(bus.cartridge.read_backup(address));
+            return Ok(match width {
+                AccessWidth::Byte => byte,
+                AccessWidth::Halfword => byte * 0x101,
+                AccessWidth::Word => byte * 0x0101_0101,
+            });
+        }
+        let mut value = 0;
+        for index in 0..width.bytes() {
+            value |= u32::from(bus.read_byte(address + index)) << (index * 8);
+        }
+        bus.open_bus = match width {
+            AccessWidth::Byte => value * 0x0101_0101,
+            AccessWidth::Halfword => value | (value << 16),
+            AccessWidth::Word => value,
+        };
+        if address < 0x4000 && bus.execution_address < 0x4000 {
+            let aligned = (address & !3) as usize;
+            bus.bios_latch = u32::from_le_bytes([
+                bus.bios[aligned],
+                bus.bios[aligned + 1],
+                bus.bios[aligned + 2],
+                bus.bios[aligned + 3],
+            ]);
+        }
+        Ok(value)
+    }
+
+    #[test]
+    fn width_reads_match_original_transactions_and_bus_state() {
+        let bios: Vec<u8> = (0..0x4000).map(|index| (index * 37 + 19) as u8).collect();
+        for rom_len in [0xc0, 0xc1, 0xc2, 0xc3, 0x101, 0x20001] {
+            // No RTC, disabled RTC, and enabled RTC (including mixed GPIO/ROM words).
+            for gpio in [None, Some(false), Some(true)] {
+                let mut rom: Vec<u8> = (0..rom_len).map(|index| (index * 53 + 7) as u8).collect();
+                if gpio.is_some() {
+                    rom[0x80..0x88].copy_from_slice(b"SIIRTC_V");
+                }
+                let mut actual = Bus::try_new(&bios, &rom).expect("synthetic images");
+                for bytes in [
+                    &mut actual.external_ram[..],
+                    &mut actual.internal_ram[..],
+                    &mut actual.palette[..],
+                    &mut actual.video_ram[..],
+                    &mut actual.object_ram[..],
+                    &mut actual.cartridge.save[..],
+                ] {
+                    for (index, byte) in bytes.iter_mut().enumerate() {
+                        *byte = (index.wrapping_mul(71) ^ (index >> 8) ^ 0xa5) as u8;
+                    }
+                }
+                actual
+                    .cartridge
+                    .write_gpio(0x0800_00c8, u16::from(gpio == Some(true)));
+                actual.cartridge.write_gpio(0x0800_00c6, 7);
+                actual.cartridge.write_gpio(0x0800_00c4, 5);
+                write(&mut actual, 0x0400_0204, AccessWidth::Halfword, 0x5fff);
+                let mut expected = actual.clone();
+                let mut offsets = Vec::new();
+                for boundary in [
+                    0, 0xc0, 0xc4, 0xc8, 0xcc, 0x100, rom_len, 0x400, 0x4000, 0x8000, 0x10000,
+                    0x18000, 0x20000, 0x40000, 0x1000000,
+                ] {
+                    for delta in -4i64..4 {
+                        let offset = boundary as i64 + delta;
+                        if (0..0x1000000).contains(&offset) {
+                            offsets.push(offset as u32);
+                        }
+                    }
+                }
+                let mut seed = 0x7832_1456u32;
+                for _ in 0..64 {
+                    seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                    offsets.push(seed & 0x00ff_ffff);
+                }
+                for region in [
+                    0u32, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 255,
+                ] {
+                    for &offset in &offsets {
+                        let address = (region << 24) | offset;
+                        for execution_address in [0, 0x0800_0000] {
+                            actual.set_execution_address(execution_address);
+                            expected.set_execution_address(execution_address);
+                            for width in
+                                [AccessWidth::Byte, AccessWidth::Halfword, AccessWidth::Word]
+                            {
+                                for kind in [AccessKind::Nonsequential, AccessKind::Sequential] {
+                                    assert_eq!(
+                                        actual.read(address, width, kind),
+                                        original_read(&mut expected, address, width, kind),
+                                        "rom_len={rom_len}, gpio={gpio:?}, address={address:08x}, width={width:?}, kind={kind:?}"
+                                    );
+                                    assert_eq!(actual.clocks, expected.clocks);
+                                    assert_eq!(actual.open_bus, expected.open_bus);
+                                    assert_eq!(actual.bios_latch, expected.bios_latch);
+                                }
+                            }
+                        }
+                    }
+                }
+                // Includes timers, DMA flags, RTC, PCM, framebuffer and I/O registers.
+                assert_eq!(
+                    postcard::to_allocvec(&actual.snapshot()).expect("serialize actual bus"),
+                    postcard::to_allocvec(&expected.snapshot()).expect("serialize original bus"),
+                    "rom_len={rom_len}, gpio={gpio:?}"
+                );
+            }
+        }
     }
 
     #[test]

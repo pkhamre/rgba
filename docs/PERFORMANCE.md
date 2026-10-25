@@ -142,6 +142,30 @@ strict CPU-reference suite was not rerun and retains its documented mismatches.
 No real-asset framebuffer/state comparison or laptop speedup is established;
 repeat the same unprofiled Emerald benchmark before/after to measure the effect.
 
+## Transaction-width memory reads
+
+Ordinary EWRAM, IWRAM, palette, VRAM, OAM and in-range ROM reads now dispatch
+once per transaction and assemble a safe little-endian byte/halfword/word load
+from a contiguous slice. Aligned transactions cannot cross the RAM mirror or
+VRAM split boundaries. GPIO-containing ROM words (including the mixed word at
+`0xc8`), partial/out-of-range ROM reads, protected BIOS and unmapped reads retain
+the original byte-wise path. I/O and cartridge backup handling, read alignment,
+waitstate charging, hardware advancement and latch updates remain unchanged.
+
+A regression retains the original transaction reader and compares returned
+values/errors, clocks, open-bus/BIOS latches and complete final bus snapshots.
+It covers all widths and access kinds, unaligned inputs, RAM/VRAM mirror edges,
+all ROM windows, six ROM lengths (including partial final halfwords/words),
+absent/disabled/enabled RTC GPIO, mixed GPIO/ROM words, BIOS execution/protection,
+I/O and unmapped/backup addresses. Snapshots include I/O registers, RTC, PCM and
+framebuffer state. This establishes sampled synthetic equivalence, not hardware
+accuracy or exhaustive address coverage.
+
+Validation: `sh scripts/check.sh`, targeted release bus tests and release workspace
+tests pass. Existing host audio `sleep: not found` warnings remain. The optional
+strict CPU-reference suite was not rerun and retains its documented mismatches.
+Real-asset equivalence and laptop performance measurements remain pending.
+
 ## Verified behavior and remaining gaps
 
 Synthetic BIOS/ROM tests exercise repeated state/PCM consistency, scripted input,
