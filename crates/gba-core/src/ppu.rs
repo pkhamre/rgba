@@ -116,6 +116,63 @@ impl BackgroundLine {
     }
 }
 
+// One decoded tile row per text background. The source tile column is enough
+// to identify it because all other configuration is fixed for this scanline.
+#[derive(Default)]
+struct TextTileRow {
+    column: Option<usize>,
+    colors: [Option<u16>; 8],
+}
+
+impl TextTileRow {
+    fn sample(
+        &mut self,
+        sx: usize,
+        line: &BackgroundLine,
+        palette: &[u8],
+        vram: &[u8],
+    ) -> Option<u16> {
+        let column = sx / 8;
+        if self.column != Some(column) {
+            let sy = line.sy;
+            let block = sx / 256 + (sy / 256) * (line.width / 256);
+            let map = line.map_base + block * 0x800 + (((sy % 256) / 8) * 32 + (sx % 256) / 8) * 2;
+            let entry = half(vram, map & 0xffff);
+            let py = if entry & 0x800 != 0 {
+                7 - sy % 8
+            } else {
+                sy % 8
+            };
+            let tile = (entry & 0x3ff) as usize;
+            let (texels, shift, mask, bank) = if line.control & 0x80 != 0 {
+                let row = line.tile_base + tile * 64 + py * 8;
+                let bytes = std::array::from_fn(|index| vram[(row + index) & 0xffff]);
+                (u64::from_le_bytes(bytes), 8, 255, 0)
+            } else {
+                let row = line.tile_base + tile * 32 + py * 4;
+                let bytes = std::array::from_fn(|index| vram[(row + index) & 0xffff]);
+                (
+                    u64::from(u32::from_le_bytes(bytes)),
+                    4,
+                    15,
+                    (entry >> 12) as usize * 16,
+                )
+            };
+            for (x, color) in self.colors.iter_mut().enumerate() {
+                let px = if entry & 0x400 != 0 { 7 - x } else { x };
+                let index = ((texels >> (px * shift)) & mask) as usize;
+                *color = if index == 0 {
+                    None
+                } else {
+                    Some(half(palette, (index + bank) * 2))
+                };
+            }
+            self.column = Some(column);
+        }
+        self.colors[sx & 7]
+    }
+}
+
 struct WindowLine {
     active: [bool; 2],
     horizontal: [u16; 2],
@@ -211,6 +268,7 @@ impl Ppu {
             }
             let backgrounds: [BackgroundLine; 4] =
                 std::array::from_fn(|bg| BackgroundLine::new(bg, y, display, io));
+            let mut text_rows: [TextTileRow; 4] = std::array::from_fn(|_| TextTileRow::default());
             let windows = WindowLine::new(y, display, io);
             let blend = half(io, 0x50);
             let effect = (blend >> 6) & 3;
@@ -226,7 +284,9 @@ impl Ppu {
                     if display & (0x100 << bg) == 0 || mask & (1 << bg) == 0 {
                         continue;
                     }
-                    if let Some(pixel) = self.background(bg, x, background, palette, vram) {
+                    if let Some(pixel) =
+                        self.background(bg, x, background, &mut text_rows[bg], palette, vram)
+                    {
                         Self::insert_layer(pixel, &mut top, &mut below);
                     }
                 }
@@ -279,6 +339,7 @@ impl Ppu {
         bg: usize,
         mut x: usize,
         line: &BackgroundLine,
+        text_row: &mut TextTileRow,
         palette: &[u8],
         vram: &[u8],
     ) -> Option<Pixel> {
@@ -289,37 +350,7 @@ impl Ppu {
         }
         let color = if line.text {
             let sx = (x + line.scroll_x) % line.width;
-            let sy = line.sy;
-            let block = sx / 256 + (sy / 256) * (line.width / 256);
-            let map = line.map_base + block * 0x800 + (((sy % 256) / 8) * 32 + (sx % 256) / 8) * 2;
-            let entry = half(vram, map & 0xffff);
-            let px = if entry & 0x400 != 0 {
-                7 - sx % 8
-            } else {
-                sx % 8
-            };
-            let py = if entry & 0x800 != 0 {
-                7 - sy % 8
-            } else {
-                sy % 8
-            };
-            let base = line.tile_base;
-            let (index, bank) = if control & 0x80 != 0 {
-                (
-                    vram[(base + (entry & 0x3ff) as usize * 64 + py * 8 + px) & 0xffff] as usize,
-                    0,
-                )
-            } else {
-                let byte = vram[(base + (entry & 0x3ff) as usize * 32 + py * 4 + px / 2) & 0xffff];
-                (
-                    ((byte >> ((px & 1) * 4)) & 15) as usize,
-                    (entry >> 12) as usize * 16,
-                )
-            };
-            if index == 0 {
-                return None;
-            }
-            half(palette, (index + bank) * 2)
+            text_row.sample(sx, line, palette, vram)?
         } else if line.affine || ((3..=5).contains(&mode) && bg == 2) {
             let affine_index = bg - 2;
             let [pa, pc] = line.affine_step;
@@ -584,6 +615,119 @@ mod tests {
             ];
             assert_eq!(hash, expected[mode as usize], "mode={mode}");
         }
+    }
+
+    #[test]
+    fn text_tile_rows_match_original_per_pixel_sampling() {
+        fn original_color(
+            x: usize,
+            line: &super::BackgroundLine,
+            palette: &[u8],
+            vram: &[u8],
+        ) -> Option<u16> {
+            let x = x - x % line.mosaic_width;
+            let sx = (x + line.scroll_x) % line.width;
+            let sy = line.sy;
+            let block = sx / 256 + (sy / 256) * (line.width / 256);
+            let map = line.map_base + block * 0x800 + (((sy % 256) / 8) * 32 + (sx % 256) / 8) * 2;
+            let entry = super::half(vram, map & 0xffff);
+            let px = if entry & 0x400 != 0 {
+                7 - sx % 8
+            } else {
+                sx % 8
+            };
+            let py = if entry & 0x800 != 0 {
+                7 - sy % 8
+            } else {
+                sy % 8
+            };
+            let (index, bank) = if line.control & 0x80 != 0 {
+                (
+                    vram[(line.tile_base + (entry & 0x3ff) as usize * 64 + py * 8 + px) & 0xffff]
+                        as usize,
+                    0,
+                )
+            } else {
+                let byte = vram
+                    [(line.tile_base + (entry & 0x3ff) as usize * 32 + py * 4 + px / 2) & 0xffff];
+                (
+                    ((byte >> ((px & 1) * 4)) & 15) as usize,
+                    (entry >> 12) as usize * 16,
+                )
+            };
+            if index == 0 {
+                None
+            } else {
+                Some(super::half(palette, (index + bank) * 2))
+            }
+        }
+
+        let mut seed = 0x2567_4a19u32;
+        let mut palette = [0; 0x400];
+        let mut vram = vec![0; 0x18000];
+        for bytes in [&mut palette[..], &mut vram[..]] {
+            for byte in bytes {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                *byte = (seed >> 24) as u8;
+            }
+        }
+        let ppu = Ppu::default();
+        let mut io = [0; 0x400];
+        for size in 0..4 {
+            for depth in [0, 0x80] {
+                for base in 0..4 {
+                    for map in [0, 31] {
+                        let control: u16 = (size << 14) | depth | (base << 2) | (map << 8) | 0x40;
+                        io[8..10].copy_from_slice(&control.to_le_bytes());
+                        for scroll_x in [0u16, 1, 7, 8, 15, 248, 255, 256, 504, 511] {
+                            io[0x10..0x12].copy_from_slice(&scroll_x.to_le_bytes());
+                            for scroll_y in [0u16, 7, 255, 256, 511] {
+                                io[0x12..0x14].copy_from_slice(&scroll_y.to_le_bytes());
+                                for mosaic in [0, 0x32, 0xff] {
+                                    io[0x4c] = mosaic;
+                                    let line = super::BackgroundLine::new(0, 159, 0, &io);
+                                    let mut row = super::TextTileRow::default();
+                                    for x in 0..240 {
+                                        // Emulate windows hiding spans, including skipped tile boundaries.
+                                        if (x / 13) % 3 == 1 {
+                                            continue;
+                                        }
+                                        assert_eq!(
+                                            ppu.background(0, x, &line, &mut row, &palette, &vram)
+                                                .map(|pixel| pixel.color),
+                                            original_color(x, &line, &palette, &vram),
+                                            "control={control:04x}, scroll=({scroll_x},{scroll_y}), mosaic={mosaic}, x={x}"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn text_tile_rows_are_rebuilt_after_vram_and_palette_writes() {
+        let mut ppu = Ppu::default();
+        let mut io = [0; 0x400];
+        let mut palette = [0; 0x400];
+        let mut vram = vec![0; 0x18000];
+        io[1] = 1; // BG0 enabled, text mode.
+        io[9] = 1; // Map at 0x800, tiles at zero.
+        vram[0x800] = 1;
+        vram[32..64].fill(0x11);
+        palette[2..4].copy_from_slice(&31u16.to_le_bytes());
+        palette[4..6].copy_from_slice(&0x7c00u16.to_le_bytes());
+        ppu.render_line(0, &io, &palette, &vram, &[0; 0x400]);
+        assert_eq!(ppu.pixels[0], Ppu::rgb(31));
+        vram[32..64].fill(0x22);
+        ppu.render_line(1, &io, &palette, &vram, &[0; 0x400]);
+        assert_eq!(ppu.pixels[240], Ppu::rgb(0x7c00));
+        palette[4..6].copy_from_slice(&0x03e0u16.to_le_bytes());
+        ppu.render_line(2, &io, &palette, &vram, &[0; 0x400]);
+        assert_eq!(ppu.pixels[480], Ppu::rgb(0x03e0));
     }
 
     #[test]

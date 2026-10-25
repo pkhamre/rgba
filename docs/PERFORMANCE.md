@@ -166,6 +166,31 @@ tests pass. Existing host audio `sleep: not found` warnings remain. The optional
 strict CPU-reference suite was not rerun and retains its documented mismatches.
 Real-asset equivalence and laptop performance measurements remain pending.
 
+## Text tile-row reuse
+
+Text backgrounds now keep one decoded eight-pixel tile row per background,
+local to the scanline render call. A source tile-column change fetches the map
+entry once, reads four (4bpp) or eight (8bpp) tile bytes, applies flips and palette
+selection, and records transparent/color values. Subsequent samples in that
+source tile reuse the row, including repeated mosaic samples. Window-hidden
+spans may skip columns; sampling the next visible column refreshes the row as
+needed. No heap allocation, persistent cache or save-state field was added.
+Affine/bitmap sampling, compositor ordering and scanline timing are unchanged.
+
+A differential test retains the previous per-pixel text sampler and compares
+varied tile/map bases, sizes, color depths, scrolling, mosaic, flips, palette
+banks and window-like gaps. A separate regression changes VRAM and palette data
+between lines to check that decoded rows do not persist. The original renderer's
+3,072-scanline framebuffer/affine-reference fingerprints still match, and existing
+window/transparency regressions pass. These are synthetic unchanged-behavior
+checks, not new hardware-accuracy evidence.
+
+Validation: `sh scripts/check.sh`, targeted release PPU tests and release workspace
+tests pass. Existing host audio `sleep: not found` warnings remain. The optional
+strict CPU-reference suite was not rerun and retains its documented mismatches.
+Real-asset equivalence and laptop performance measurements remain pending;
+decoding unused pixels at narrow window edges can offset some saved work.
+
 ## Verified behavior and remaining gaps
 
 Synthetic BIOS/ROM tests exercise repeated state/PCM consistency, scripted input,
