@@ -119,6 +119,103 @@ fn unsupported_io_returns_a_terminal_error_with_instruction_location() {
 }
 
 #[test]
+fn benchmark_repeats_without_touching_cartridge_saves() {
+    let directory = RunDirectory::new();
+    // Even an invalid adjacent save must not influence a benchmark.
+    fs::write(directory.path.join("game.sav"), b"do not load or overwrite").expect("existing save");
+    let output = directory.run(&[
+        "--benchmark",
+        "--frames",
+        "3",
+        "--warmup-frames",
+        "1",
+        "--repeats",
+        "2",
+        "--input",
+        "0:a",
+        "--input",
+        "1:none",
+        "--screenshot",
+        "final.ppm",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let log = String::from_utf8_lossy(&output.stderr);
+    assert!(log.contains("repeat=1 "));
+    assert!(log.contains("repeat=2 "));
+    assert!(log.contains("deterministic=true"));
+    assert!(log.contains("realtime_x="));
+    assert_eq!(
+        fs::read(directory.path.join("game.sav")).expect("save"),
+        b"do not load or overwrite"
+    );
+    assert!(directory.path.join("final.ppm").exists());
+    fs::remove_file(directory.path.join("game.sav")).expect("remove save");
+    let output = directory.run(&[
+        "--benchmark",
+        "--frames",
+        "1",
+        "--warmup-frames",
+        "0",
+        "--repeats",
+        "1",
+    ]);
+    assert!(output.status.success());
+    assert!(!directory.path.join("game.sav").exists());
+}
+
+#[test]
+fn benchmark_loads_state_and_rejects_invalid_state() {
+    let directory = RunDirectory::new();
+    let bios = fs::read(directory.path.join("bios.bin")).expect("BIOS");
+    let rom = fs::read(directory.path.join("game.gba")).expect("ROM");
+    let mut machine = gba_core::Machine::try_new(&bios, &rom).expect("machine");
+    machine.run_frame().expect("advance snapshot");
+    let state = machine.save_state().expect("state");
+    fs::write(directory.path.join("start.state"), &state).expect("write state");
+    let output = directory.run(&[
+        "--benchmark",
+        "--frames",
+        "2",
+        "--warmup-frames",
+        "0",
+        "--state",
+        "start.state",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read(directory.path.join("start.state")).expect("state"),
+        state
+    );
+    fs::write(directory.path.join("start.state"), b"invalid state").expect("corrupt state");
+    let output = directory.run(&["--benchmark", "--frames", "1", "--state", "start.state"]);
+    assert!(!output.status.success());
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("benchmark_complete"));
+}
+
+#[test]
+fn benchmark_fault_is_not_reported_as_success() {
+    let directory = RunDirectory::new();
+    let mut bios = vec![0; 0x4000];
+    for (index, opcode) in [0xe3a0_0301u32, 0xe590_1400].into_iter().enumerate() {
+        bios[index * 4..index * 4 + 4].copy_from_slice(&opcode.to_le_bytes());
+    }
+    fs::write(directory.path.join("bios.bin"), bios).expect("unsupported I/O fixture");
+    let output = directory.run(&["--benchmark", "--frames", "1", "--warmup-frames", "0"]);
+    assert!(!output.status.success());
+    let log = String::from_utf8_lossy(&output.stderr);
+    assert!(log.contains("benchmark frame 0, PC 00000004"));
+    assert!(!log.contains("benchmark_complete"));
+}
+
+#[test]
 fn help_needs_no_assets() {
     let output = Command::new(env!("CARGO_BIN_EXE_gba-headless"))
         .arg("--help")

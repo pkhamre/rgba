@@ -1,6 +1,7 @@
 //! Bounded development runner for the emulator core.
 
 mod arguments;
+mod benchmark;
 mod runner;
 
 use std::env;

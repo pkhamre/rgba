@@ -16,6 +16,9 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             format!("{message}\n{}", arguments::USAGE),
         )
     })?;
+    if args.benchmark {
+        return crate::benchmark::run(&args);
+    }
     let mut session = Session::try_new(&args.bios, &args.rom, None)?;
     eprintln!(
         "ROM: {}; save: {}",

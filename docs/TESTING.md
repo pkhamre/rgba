@@ -10,7 +10,7 @@ sh scripts/check.sh
 sh scripts/cargo.sh test --workspace --release
 ```
 
-Current standard result: **185 Rust unit/integration tests, one doctest, and 26
+Current standard result: **192 Rust unit/integration tests, one doctest, and 29
 Python tool tests pass**. Two ignored optional tests require reference assets.
 An additional ignored presentation test requires a dedicated Xvfb display.
 The standard tests use synthetic data only; CI needs no BIOS/game/test ROM.
@@ -22,6 +22,24 @@ when state loading replaces cartridge data, alias protection, and corrupt-state
 failure without changing the running machine or save file. Desktop menu, game
 library, keyboard/gamepad controls, and state-result notices are implemented and
 have separate coverage documented in the desktop validation section below.
+
+## Headless performance tooling
+
+See [PERFORMANCE.md](PERFORMANCE.md) for repeatable benchmarks and Linux perf
+commands. Asset-free coverage includes benchmark parsing, exact repeated final
+states, PCM fingerprints/counts, scripted keys, state restore/rejection, terminal
+core faults, and no loading/creation/modification of adjacent cartridge saves.
+Mocked profiler checks cover paths with spaces, exclusive private output
+directories, and build/record failure propagation.
+
+Validation: `sh scripts/check.sh`, release workspace tests, and a real `profiling`
+profile build pass using the isolated Rust 1.90/musl toolchain. A synthetic
+120-frame, three-repeat profiling-build smoke run matched clocks, PCM and final
+state across repeats. Existing host
+audio tests still emit `sleep: not found` warnings. Real perf recording and
+symbol attribution were not exercised (`perf` is unavailable here); no real
+BIOS/game performance result or laptop speedup is claimed. The optional strict
+CPU reference comparison was not rerun and retains its known mismatches.
 
 ## Controller state shortcuts
 

@@ -18,3 +18,9 @@ unwrap_used = "warn"
 [profile.release]
 overflow-checks = true
 lto = "thin"
+
+# Keep release optimization and overflow behavior, adding symbols for Linux perf.
+[profile.profiling]
+inherits = "release"
+debug = 2
+strip = false

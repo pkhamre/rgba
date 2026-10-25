@@ -6,6 +6,10 @@ pub(crate) struct Arguments {
     pub(crate) bios: PathBuf,
     pub(crate) rom: PathBuf,
     pub(crate) steps: u64,
+    pub(crate) benchmark: bool,
+    pub(crate) warmup_frames: u64,
+    pub(crate) repeats: u32,
+    pub(crate) state: Option<PathBuf>,
     pub(crate) trace: Option<PathBuf>,
     pub(crate) stop_at: Option<u32>,
     pub(crate) frames: Option<u64>,
@@ -25,10 +29,19 @@ Trace files contain v1 post-activity state; exec/skip, halt, and irq identify th
 --input FRAME:BUTTONS changes held keys (e.g. 400:start, 410:none).
 --test-result-register waits for a stable self-branch and reports zero as PASS,
   nonzero as FAIL. Execution still stops at --steps if the ROM never completes.
-Headless runner: sound is emulated, not played. Use scripted_session for WAV capture.";
+Headless runner: sound is emulated, not played. Use scripted_session for WAV capture.
+--benchmark --frames COUNT runs unpaced repeated measurements without loading/writing saves.
+  [--warmup-frames COUNT] (default 60; zero allowed) [--repeats COUNT] (default 3)
+  [--state PATH] restores a ROM-bound state before warm-up. Input frame zero is after warm-up.
+Benchmark repeats start from identical state; PCM and final state must match.
+Use the profiling Cargo profile and scripts/profile-headless.sh for Linux perf call graphs.";
 
 impl Arguments {
     pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Self, String> {
+        let mut benchmark = false;
+        let mut warmup_frames = None;
+        let mut repeats = None;
+        let mut state = None;
         let mut bios = None;
         let mut rom = None;
         let mut steps = None;
@@ -40,8 +53,18 @@ impl Arguments {
         let mut test_result_register = None;
         let mut args = args;
         while let Some(option) = args.next() {
+            if option == "--benchmark" {
+                if benchmark {
+                    return Err("duplicate option --benchmark".to_owned());
+                }
+                benchmark = true;
+                continue;
+            }
             let value = match option.as_str() {
                 "--bios"
+                | "--warmup-frames"
+                | "--repeats"
+                | "--state"
                 | "--rom"
                 | "--steps"
                 | "--trace"
@@ -55,6 +78,18 @@ impl Arguments {
                 _ => return Err(format!("unknown option {option}")),
             };
             match option.as_str() {
+                "--warmup-frames" if warmup_frames.is_none() => {
+                    warmup_frames =
+                        Some(value.parse::<u64>().map_err(|_| "invalid warmup frames")?);
+                }
+                "--repeats" if repeats.is_none() => {
+                    let count = value.parse::<u32>().map_err(|_| "invalid repeats")?;
+                    if count == 0 {
+                        return Err("repeats must be positive".to_owned());
+                    }
+                    repeats = Some(count);
+                }
+                "--state" if state.is_none() => state = Some(PathBuf::from(value)),
                 "--bios" if bios.is_none() => bios = Some(PathBuf::from(value)),
                 "--rom" if rom.is_none() => rom = Some(PathBuf::from(value)),
                 "--steps" if steps.is_none() => {
@@ -138,7 +173,17 @@ impl Arguments {
         if !input.is_empty() && frames.is_none() {
             return Err("--input requires --frames".to_owned());
         }
+        if benchmark && frames.is_none() {
+            return Err("--benchmark requires --frames".to_owned());
+        }
+        if !benchmark && (warmup_frames.is_some() || repeats.is_some() || state.is_some()) {
+            return Err("--warmup-frames, --repeats and --state require --benchmark".to_owned());
+        }
         Ok(Self {
+            benchmark,
+            warmup_frames: warmup_frames.unwrap_or(60),
+            repeats: repeats.unwrap_or(3),
+            state,
             bios: bios.ok_or_else(|| "--bios is required".to_owned())?,
             rom: rom.ok_or_else(|| "--rom is required".to_owned())?,
             steps: steps.unwrap_or(100000),
@@ -159,6 +204,59 @@ mod tests {
 
     fn parse(args: &[&str]) -> Result<Arguments, String> {
         Arguments::parse(args.iter().map(|arg| (*arg).to_owned()))
+    }
+
+    #[test]
+    fn accepts_benchmark_configuration() {
+        let args = parse(&[
+            "--bios",
+            "b",
+            "--rom",
+            "r",
+            "--benchmark",
+            "--frames",
+            "10",
+            "--warmup-frames",
+            "0",
+            "--repeats",
+            "2",
+            "--state",
+            "game.state",
+            "--input",
+            "0:a",
+            "--input",
+            "2:none",
+        ])
+        .expect("benchmark arguments");
+        assert!(args.benchmark);
+        assert_eq!(args.warmup_frames, 0);
+        assert_eq!(args.repeats, 2);
+        assert_eq!(args.state, Some(PathBuf::from("game.state")));
+        assert_eq!(args.input, [(0, 1), (2, 0)]);
+        let defaults = parse(&["--bios", "b", "--rom", "r", "--benchmark", "--frames", "1"])
+            .expect("benchmark defaults");
+        assert_eq!(defaults.warmup_frames, 60);
+        assert_eq!(defaults.repeats, 3);
+    }
+
+    #[test]
+    fn rejects_invalid_benchmark_combinations() {
+        for extra in [
+            vec!["--benchmark"],
+            vec!["--frames", "1", "--repeats", "2"],
+            vec!["--state", "s"],
+            vec!["--warmup-frames", "0"],
+            vec!["--benchmark", "--frames", "1", "--repeats", "0"],
+            vec!["--benchmark", "--frames", "1", "--repeats", "-1"],
+            vec!["--benchmark", "--frames", "1", "--benchmark"],
+            vec!["--benchmark", "--frames", "1", "--trace", "t"],
+            vec!["--benchmark", "--frames", "1", "--steps", "1"],
+            vec!["--benchmark", "--frames", "1", "--warmup-frames", "-1"],
+        ] {
+            let mut args = vec!["--bios", "b", "--rom", "r"];
+            args.extend(extra);
+            assert!(parse(&args).is_err(), "must reject {args:?}");
+        }
     }
 
     #[test]

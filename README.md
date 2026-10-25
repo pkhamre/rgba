@@ -151,6 +151,12 @@ that save to disk; it does not create an emulator state. F6/F7 use a separate
 versioned quick-state file. Loading a state also writes its cartridge
 backup to the configured save file. See [save and RTC policy](docs/TEST_BUILD.md).
 
+## Performance diagnostics
+
+Use the [headless benchmark and Linux profiler](docs/PERFORMANCE.md) to measure
+repeatable core workloads and identify hot functions. Benchmarks run without
+window/audio output and never write cartridge saves.
+
 ## Debug logging
 
 Add `--debug` to capture the desktop app's stdout and stderr, including startup
