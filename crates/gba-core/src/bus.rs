@@ -510,6 +510,10 @@ impl Bus {
             return Err(crate::StateError::InvalidData);
         }
         snapshot.hardware.registers.copy_from_slice(registers);
+        snapshot
+            .hardware
+            .apu
+            .rebuild_periods(&snapshot.hardware.registers);
         snapshot.bios.clone_from(&self.bios);
         snapshot.rom.clone_from(&self.rom);
         *self = snapshot;
@@ -620,6 +624,64 @@ mod tests {
             ]);
         }
         Ok(value)
+    }
+
+    #[test]
+    fn restoring_active_audio_rebuilds_periods_from_io_registers() {
+        let mut source = bus();
+        for (offset, value) in [
+            (0x84, 0x80),
+            (0x63, 0xf0),
+            (0x64, 0x70),
+            (0x65, 0x87),
+            (0x69, 0xc0),
+            (0x6c, 0xfe),
+            (0x6d, 0x87),
+            (0x70, 0xe0),
+            (0x73, 0x20),
+            (0x74, 0xfe),
+            (0x75, 0x87),
+            (0x79, 0xf0),
+            (0x7c, 8),
+            (0x7d, 0x80),
+            (0x80, 0x77),
+            (0x81, 0xff),
+            (0x82, 2),
+        ] {
+            write(&mut source, 0x0400_0000 + offset, AccessWidth::Byte, value);
+        }
+        for offset in 0x90..0xa0 {
+            write(
+                &mut source,
+                0x0400_0000 + offset,
+                AccessWidth::Byte,
+                offset * 7,
+            );
+        }
+        source.advance(137);
+        let (snapshot, registers) = source.snapshot();
+        // Exercise deserialization (derived caches are absent), not just cloning.
+        let bytes = postcard::to_allocvec(&snapshot).expect("encode bus snapshot");
+        let snapshot: Bus = postcard::from_bytes(&bytes).expect("decode bus snapshot");
+        let mut restored = bus();
+        restored
+            .restore_snapshot(snapshot, &registers)
+            .expect("restore bus");
+        assert_eq!(
+            postcard::to_allocvec(&source.snapshot()).expect("source snapshot"),
+            postcard::to_allocvec(&restored.snapshot()).expect("restored snapshot")
+        );
+        for _ in 0..2048 {
+            source.advance(512);
+            restored.advance(512);
+        }
+        let pcm = source.hardware.apu.take_samples();
+        assert_eq!(pcm, restored.hardware.apu.take_samples());
+        assert!(pcm.windows(2).any(|frames| frames[0] != frames[1]));
+        assert_eq!(
+            postcard::to_allocvec(&source.snapshot()).expect("continued source snapshot"),
+            postcard::to_allocvec(&restored.snapshot()).expect("continued restored snapshot")
+        );
     }
 
     #[test]

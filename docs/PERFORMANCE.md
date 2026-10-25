@@ -191,6 +191,37 @@ strict CPU-reference suite was not rerun and retains its documented mismatches.
 Real-asset equivalence and laptop performance measurements remain pending;
 decoding unused pixels at narrow window edges can offset some saved work.
 
+## APU channel-period caching
+
+After the timer, renderer and bus-read steps, the user reported unprofiled
+five-repeat Emerald medians of 20.094260 seconds at baseline `f520e2d` and
+18.188221 seconds after tile-row reuse: 9.5% less execution time, or 10.5% more
+throughput. Clocks, PCM count/hash and final-state hash matched. This is one
+workload and does not isolate individual changes or prove identical historical
+framebuffers. The subsequent optimized profile attributed 18.47% of self samples
+to `Apu::advance`; implausible call chains remain an attribution limitation.
+
+APU advancement now reads four cached channel periods instead of decoding
+frequency/noise registers on every bus slice. Relevant accepted register writes,
+channel-1 sweep updates and master reset maintain the cache. It is excluded from
+serialization, preserving the original version-1 APU payload, and bus restoration
+rebuilds it after restoring the separate I/O registers. Event scheduling, phase
+retiming rules, noise feedback, mixing and sample generation are unchanged.
+
+Tests cover all 2,048 square/wave frequencies, all 256 noise control bytes,
+ignored powered-off writes, reset, positive/negative sweep, and exact PCM/state
+comparison against the original uncached advancement with scripted writes,
+triggers, FIFO activity and varying bus-sized clock slices. A legacy-layout
+serialization comparison and active-audio bus snapshot continuation exercise
+state compatibility and cache reconstruction. Required checks, targeted release
+APU/restoration tests and release workspace tests pass. Existing host audio
+`sleep: not found` warnings remain. The optional strict CPU-reference suite was
+not rerun and retains its documented mismatches.
+
+The reported 10.5% throughput improvement predates this APU change. No additional
+laptop speedup or real-asset equivalence is claimed until the unprofiled benchmark
+and profile are rerun; these synthetic checks do not establish hardware fidelity.
+
 ## Verified behavior and remaining gaps
 
 Synthetic BIOS/ROM tests exercise repeated state/PCM consistency, scripted input,

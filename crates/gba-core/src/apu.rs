@@ -50,9 +50,17 @@ struct Channel {
     envelope: u8,
 }
 
+fn default_periods() -> [u64; 4] {
+    [32768, 32768, 16384, 32]
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Apu {
     channels: [Channel; 4],
+    // Derived from sound registers; do not change the version-1 state payload.
+    // Bus restoration rebuilds these after restoring the separate I/O bytes.
+    #[serde(skip, default = "default_periods")]
+    periods: [u64; 4],
     wave: [[u8; 16]; 2],
     wave_bank: usize,
     noise: u16,
@@ -74,6 +82,7 @@ impl Default for Apu {
     fn default() -> Self {
         Self {
             channels: std::array::from_fn(|_| Channel::default()),
+            periods: default_periods(),
             wave: [[0; 16]; 2],
             wave_bank: 0,
             noise: 0x4000,
@@ -96,6 +105,24 @@ fn half(registers: &[u8; 0x400], offset: usize) -> u16 {
 }
 
 impl Apu {
+    fn channel_period(index: usize, registers: &[u8; 0x400]) -> u64 {
+        if index == 3 {
+            let value = registers[0x7c];
+            (if value & 7 == 0 {
+                32
+            } else {
+                64 * u64::from(value & 7)
+            }) << (value >> 4)
+        } else {
+            let frequency = half(registers, [0x64, 0x6c, 0x74][index]) & 2047;
+            u64::from(2048 - frequency) * if index == 2 { 8 } else { 16 }
+        }
+    }
+
+    pub(crate) fn rebuild_periods(&mut self, registers: &[u8; 0x400]) {
+        self.periods = std::array::from_fn(|index| Self::channel_period(index, registers));
+    }
+
     pub(crate) fn valid_snapshot(&self) -> bool {
         self.wave_bank < 2
             && self.fifo.iter().all(|fifo| fifo.len() <= 32)
@@ -170,6 +197,7 @@ impl Apu {
             if value & 0x80 == 0 {
                 registers[0x60..0x82].fill(0);
                 self.channels = std::array::from_fn(|_| Channel::default());
+                self.periods = default_periods();
                 self.sequencer_clocks = 0;
                 self.sequencer_step = 0;
                 self.wave_bank = 0;
@@ -191,6 +219,16 @@ impl Apu {
             return;
         }
         registers[offset] = value;
+        let period_channel = match offset {
+            0x64 | 0x65 => Some(0),
+            0x6c | 0x6d => Some(1),
+            0x74 | 0x75 => Some(2),
+            0x7c => Some(3),
+            _ => None,
+        };
+        if let Some(index) = period_channel {
+            self.periods[index] = Self::channel_period(index, registers);
+        }
         if offset == 0x70 {
             self.wave_bank = usize::from(value >> 6 & 1);
             if value & 0x80 == 0 {
@@ -283,6 +321,7 @@ impl Apu {
                         self.sweep_frequency = next;
                         registers[0x64] = next as u8;
                         registers[0x65] = (registers[0x65] & 0x40) | (next >> 8) as u8;
+                        self.periods[0] = Self::channel_period(0, registers);
                         if self.sweep_value(control).is_none() {
                             self.channels[0].enabled = false;
                         }
@@ -319,17 +358,7 @@ impl Apu {
             if !self.channels[index].enabled {
                 continue;
             }
-            let frequency = half(registers, [0x64, 0x6c, 0x74, 0x7c][index]) & 2047;
-            let period = if index == 3 {
-                let value = registers[0x7c];
-                (if value & 7 == 0 {
-                    32
-                } else {
-                    64 * u64::from(value & 7)
-                }) << (value >> 4)
-            } else {
-                u64::from(2048 - frequency) * if index == 2 { 8 } else { 16 }
-            };
+            let period = self.periods[index];
             let channel = &mut self.channels[index];
             channel.clocks += cycles;
             while channel.clocks >= period {
@@ -467,6 +496,252 @@ mod tests {
         r[0x89] = 2;
         r
     }
+    // Original advancement path: decode periods from registers on every call.
+    // Sequencing and mixing are shared, but this never consults cached periods.
+    fn original_advance(apu: &mut Apu, cycles: u64, registers: &mut [u8; 0x400]) {
+        for index in 0..4 {
+            if !apu.channels[index].enabled {
+                continue;
+            }
+            let frequency = super::half(registers, [0x64, 0x6c, 0x74, 0x7c][index]) & 2047;
+            let period = if index == 3 {
+                let value = registers[0x7c];
+                (if value & 7 == 0 {
+                    32
+                } else {
+                    64 * u64::from(value & 7)
+                }) << (value >> 4)
+            } else {
+                u64::from(2048 - frequency) * if index == 2 { 8 } else { 16 }
+            };
+            let channel = &mut apu.channels[index];
+            channel.clocks += cycles;
+            while channel.clocks >= period {
+                channel.clocks -= period;
+                if index == 3 {
+                    let carry = apu.noise & 1;
+                    apu.noise >>= 1;
+                    if carry != 0 {
+                        apu.noise ^= if registers[0x7c] & 8 != 0 {
+                            0x60
+                        } else {
+                            0x6000
+                        };
+                    }
+                } else {
+                    channel.phase += 1;
+                    if index == 2 && channel.phase == 32 {
+                        channel.phase = 0;
+                        if registers[0x70] & 0x20 != 0 {
+                            apu.wave_bank ^= 1;
+                        }
+                    } else if index != 2 {
+                        channel.phase &= 7;
+                    }
+                }
+            }
+        }
+        if registers[0x84] & 0x80 != 0 {
+            apu.sequencer_clocks += cycles;
+        }
+        if apu.sequencer_clocks >= 32768 {
+            apu.sequencer_clocks -= 32768;
+            apu.sequence(registers);
+        }
+        apu.sample_clocks += cycles;
+        if apu.sample_clocks == 512 {
+            apu.sample_clocks = 0;
+            if apu.samples.len() == super::QUEUE_LIMIT {
+                apu.samples.pop_front();
+                apu.dropped += 1;
+            }
+            apu.samples.push_back(apu.mix(registers));
+            apu.generated += 1;
+        }
+    }
+
+    #[test]
+    fn cached_periods_cover_frequency_and_noise_register_values() {
+        let mut apu = Apu::default();
+        let mut r = registers();
+        for (channel, offset) in [0x64, 0x6c, 0x74].into_iter().enumerate() {
+            for frequency in 0..2048u16 {
+                apu.write(offset, frequency as u8, &mut r);
+                let intermediate = super::half(&r, offset) & 2047;
+                let scale = if channel == 2 { 8 } else { 16 };
+                assert_eq!(apu.periods[channel], u64::from(2048 - intermediate) * scale);
+                apu.write(offset + 1, (frequency >> 8) as u8, &mut r);
+                assert_eq!(apu.periods[channel], u64::from(2048 - frequency) * scale);
+            }
+        }
+        for value in 0..=255u8 {
+            apu.write(0x7c, value, &mut r);
+            let divisor = [32u64, 64, 128, 192, 256, 320, 384, 448][(value & 7) as usize];
+            assert_eq!(apu.periods[3], divisor * (1u64 << (value >> 4)));
+        }
+        apu.write(0x84, 0, &mut r);
+        assert_eq!(apu.periods, super::default_periods());
+        for offset in [0x64, 0x65, 0x6c, 0x6d, 0x74, 0x75, 0x7c] {
+            apu.write(offset, 0xff, &mut r);
+        }
+        assert_eq!(
+            apu.periods,
+            super::default_periods(),
+            "powered-off writes are ignored"
+        );
+    }
+
+    #[test]
+    fn cached_advancement_matches_original_pcm_and_state() {
+        for sweep in [0x11, 0x19] {
+            let mut actual = Apu::default();
+            let mut expected = actual.clone();
+            let mut ra = registers();
+            let mut rb = ra;
+            let mut seed = 0x8753_1429u32;
+            let mut varied_pcm = false;
+            for step in 0..8192 {
+                let mut writes = Vec::new();
+                if step % 1024 == 0 {
+                    writes.extend([
+                        (0x84, 0),
+                        (0x64, 0xff),
+                        (0x7c, 0xff), // Reset, then ignored writes.
+                        (0x84, 0x80),
+                        (0x60, sweep),
+                        (0x62, 0x80),
+                        (0x63, 0xf2),
+                        (0x64, 0),
+                        (0x65, 0x82),
+                        (0x68, 0x40),
+                        (0x69, 0xb3),
+                        (0x6c, 0xff),
+                        (0x6d, 0x87),
+                        (0x70, 0xe0),
+                        (0x72, 0),
+                        (0x73, 0x20),
+                        (0x74, 0xff),
+                        (0x75, 0x87),
+                        (0x79, 0xf1),
+                        (0x7c, 8),
+                        (0x7d, 0x80),
+                        (0x80, 0x77),
+                        (0x81, 0xff),
+                        (0x82, 0x0e),
+                        (0x83, 0x33),
+                        (0x88, 0),
+                        (0x89, 2),
+                    ]);
+                    for offset in 0x90..0xa0 {
+                        writes.push((offset, (offset as u8).wrapping_mul(37)));
+                    }
+                }
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                if step % 53 == 0 {
+                    let offset = [0x64, 0x6c, 0x74][(step / 53) % 3];
+                    writes.extend([(offset, seed as u8), (offset + 1, (seed >> 8) as u8 & 7)]);
+                }
+                if step % 37 == 0 {
+                    writes.push((0x7c, (seed >> 16) as u8));
+                }
+                if step % 211 == 0 {
+                    writes.push(([0x65, 0x6d, 0x75, 0x7d][(step / 211) % 4], 0xc7));
+                }
+                for (offset, value) in writes {
+                    actual.write(offset, value, &mut ra);
+                    expected.write(offset, value, &mut rb);
+                }
+                if step % 7 == 0 {
+                    for fifo in 0..2 {
+                        actual.write(0xa0 + fifo * 4, seed as u8, &mut ra);
+                        expected.write(0xa0 + fifo * 4, seed as u8, &mut rb);
+                        actual.clock_fifo(fifo, 1);
+                        expected.clock_fifo(fifo, 1);
+                    }
+                }
+                let cycles = (1 + u64::from(seed & 511)).min(actual.next_sample());
+                actual.advance(cycles, &mut ra);
+                original_advance(&mut expected, cycles, &mut rb);
+                assert_eq!(ra, rb, "sweep={sweep}, step={step}");
+                for index in 0..4 {
+                    assert_eq!(actual.periods[index], Apu::channel_period(index, &ra));
+                }
+                if step % 256 == 255 {
+                    assert_eq!(
+                        postcard::to_allocvec(&actual).expect("serialize cached APU"),
+                        postcard::to_allocvec(&expected).expect("serialize original APU"),
+                        "sweep={sweep}, step={step}"
+                    );
+                    let pcm = actual.take_samples();
+                    assert_eq!(pcm, expected.take_samples());
+                    varied_pcm |= pcm.windows(2).any(|frames| frames[0] != frames[1]);
+                }
+            }
+            assert!(
+                varied_pcm,
+                "differential playback must exercise changing output"
+            );
+        }
+    }
+
+    #[test]
+    fn cached_periods_preserve_legacy_serialized_layout() {
+        let mut apu = Apu::default();
+        let mut r = registers();
+        for (offset, value) in [(0x63, 0xf0), (0x64, 0xff), (0x65, 0x87), (0x7c, 0xdb)] {
+            apu.write(offset, value, &mut r);
+        }
+        apu.advance(512, &mut r);
+        // Exactly the original APU field sequence, before the derived cache existed.
+        let legacy = postcard::to_allocvec(&(
+            &apu.channels,
+            &apu.wave,
+            apu.wave_bank,
+            apu.noise,
+            apu.sweep_frequency,
+            apu.sweep_ticks,
+            apu.sequencer_clocks,
+            apu.sequencer_step,
+            apu.sample_clocks,
+            &apu.fifo,
+            apu.held,
+            &apu.samples,
+            apu.generated,
+            apu.dropped,
+        ))
+        .expect("serialize original APU layout");
+        assert_eq!(
+            postcard::to_allocvec(&apu).expect("serialize cached APU"),
+            legacy
+        );
+        let mut restored: Apu = postcard::from_bytes(&legacy).expect("decode original APU layout");
+        restored.rebuild_periods(&r);
+        assert_eq!(restored.periods, apu.periods);
+    }
+
+    #[test]
+    fn cached_periods_follow_positive_and_negative_sweep() {
+        for (control, expected_frequency) in [(0x11, 768u16), (0x19, 256)] {
+            let mut apu = Apu::default();
+            let mut r = registers();
+            for (offset, value) in [(0x60, control), (0x63, 0xf0), (0x64, 0), (0x65, 0x82)] {
+                apu.write(offset, value, &mut r);
+            }
+            apu.sequencer_step = 2;
+            apu.sequence(&mut r);
+            assert_eq!(super::half(&r, 0x64) & 2047, expected_frequency);
+            assert_eq!(apu.periods[0], u64::from(2048 - expected_frequency) * 16);
+            let mut expected = apu.clone();
+            let mut expected_registers = r;
+            for _ in 0..128 {
+                apu.advance(512, &mut r);
+                original_advance(&mut expected, 512, &mut expected_registers);
+            }
+            assert_eq!(apu.take_samples(), expected.take_samples());
+            assert_eq!(r, expected_registers);
+        }
+    }
+
     #[test]
     fn muted_psg_channels_do_not_clip_direct_sound_with_dc() {
         let mut a = Apu::default();
