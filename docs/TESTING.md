@@ -10,7 +10,7 @@ sh scripts/check.sh
 sh scripts/cargo.sh test --workspace --release
 ```
 
-Current standard result: **174 Rust unit/integration tests, one doctest, and 26
+Current standard result: **181 Rust unit/integration tests, one doctest, and 26
 Python tool tests pass**. Two ignored optional tests require reference assets.
 An additional ignored presentation test requires a dedicated Xvfb display.
 The standard tests use synthetic data only; CI needs no BIOS/game/test ROM.
@@ -22,6 +22,27 @@ when state loading replaces cartridge data, alias protection, and corrupt-state
 failure without changing the running machine or save file. Desktop menu, game
 library, keyboard/gamepad controls, and state-result notices are implemented and
 have separate coverage documented in the desktop validation section below.
+
+## Controller state shortcuts
+
+RT saves and LT loads the quick state; RB/LB remain GBA R/L. Synthetic desktop
+tests cover digital and analog trigger action edges, held-trigger repeat
+prevention, trigger release during capture, quick taps, game-button isolation,
+held-input suppression, state binding conflicts/round trips, legacy settings
+migration without stealing existing inputs, menu capture/cancel/reset, and
+save/load dispatch with notices and restored clocks/revision. Menu navigation
+and binding capture do not execute state shortcuts. Existing host tests cover
+save-state persistence and corrupt-state handling. `sh scripts/check.sh`, release
+workspace tests, and the desktop release build pass. Host audio tests still emit
+`sleep: not found` warnings in this environment. The optional strict CPU reference
+comparison was not rerun; its documented mismatches remain unresolved.
+
+Physical 8BitDo input and R4/L4 exposure have not been verified here. For manual
+validation, use RT/LT in gameplay and while paused, hold each trigger to check
+that it fires only once, then rebind SAVE STATE / LOAD STATE in PAD KEYBINDS.
+Restart the game to verify persistence. Confirm RB/LB still reach the game,
+menu capture does not save/load, and an exposed R4/L4 can be assigned. Extra
+buttons that mirror existing inputs cannot be distinguished by evdev.
 
 ## Linux release packaging
 

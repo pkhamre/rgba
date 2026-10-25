@@ -434,36 +434,22 @@ fn run_window(
                                 eprintln!("Screenshot failed: {error}");
                             }
                         }
-                        Some(crate::keybindings::Action::SaveState) => match session.save_state() {
-                            Ok(()) => {
-                                set_state_notice(&mut state_notice, "STATE SAVED", true);
-                                eprintln!("Save state: {}", session.state_path().display());
+                        Some(action @ (Action::SaveState | Action::LoadState)) => {
+                            if handle_state_action(
+                                action,
+                                session,
+                                &mut audio,
+                                &mut state_notice,
+                                &mut revision,
+                            ) {
+                                next_frame = Instant::now();
                             }
-                            Err(error) => {
-                                set_state_notice(&mut state_notice, "SAVE FAILED", false);
-                                eprintln!("Save-state write failed: {error}");
-                            }
-                        },
+                        }
                         Some(crate::keybindings::Action::Exit) => {
                             if flush_save(session) {
                                 running = false;
                             }
                         }
-                        Some(crate::keybindings::Action::LoadState) => match session.load_state() {
-                            Ok(()) => {
-                                set_state_notice(&mut state_notice, "STATE LOADED", true);
-                                if let Some(output) = &mut audio {
-                                    output.reset_after_state_load();
-                                }
-                                revision = session.machine().save_revision();
-                                next_frame = Instant::now();
-                                eprintln!("Loaded state: {}", session.state_path().display());
-                            }
-                            Err(error) => {
-                                set_state_notice(&mut state_notice, "LOAD FAILED", false);
-                                eprintln!("Save-state load failed: {error}");
-                            }
-                        },
                         _ => {}
                     }
                 }
@@ -551,6 +537,19 @@ fn run_window(
                 )?;
                 if !menu_open || !running {
                     break;
+                }
+            }
+        }
+        if !menu_open && !menu_was_open && !controller_capture_at_frame_start && running {
+            for action in gamepad_poll.pressed_actions.iter().copied() {
+                if handle_state_action(
+                    action,
+                    session,
+                    &mut audio,
+                    &mut state_notice,
+                    &mut revision,
+                ) {
+                    next_frame = Instant::now();
                 }
             }
         }
@@ -736,6 +735,45 @@ fn set_window_title(
         )?
         .check()?;
     Ok(())
+}
+
+// Returns true only when a successful load requires resetting frame pacing.
+fn handle_state_action(
+    action: Action,
+    session: &mut Session,
+    audio: &mut Option<AudioOutput>,
+    notice: &mut Option<StateNotice>,
+    revision: &mut u64,
+) -> bool {
+    match action {
+        Action::SaveState => match session.save_state() {
+            Ok(()) => {
+                set_state_notice(notice, "STATE SAVED", true);
+                eprintln!("Save state: {}", session.state_path().display());
+            }
+            Err(error) => {
+                set_state_notice(notice, "SAVE FAILED", false);
+                eprintln!("Save-state write failed: {error}");
+            }
+        },
+        Action::LoadState => match session.load_state() {
+            Ok(()) => {
+                set_state_notice(notice, "STATE LOADED", true);
+                if let Some(output) = audio {
+                    output.reset_after_state_load();
+                }
+                *revision = session.machine().save_revision();
+                eprintln!("Loaded state: {}", session.state_path().display());
+                return true;
+            }
+            Err(error) => {
+                set_state_notice(notice, "LOAD FAILED", false);
+                eprintln!("Save-state load failed: {error}");
+            }
+        },
+        _ => {}
+    }
+    false
 }
 
 struct MenuRuntime<'a> {
@@ -996,6 +1034,81 @@ pub(crate) fn pack_pixels(
 #[cfg(test)]
 mod tests {
     use crate::keybindings::KeyBindings;
+
+    #[test]
+    fn state_shortcuts_save_restore_and_report_failures_without_a_display() {
+        use crate::keybindings::Action;
+        use gba_host::Session;
+        use std::fs;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "rgba-state-shortcuts-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).expect("test directory");
+        let bios = root.join("bios.bin");
+        let rom = root.join("game.gba");
+        let mut program = vec![0; 0x4000];
+        program[..4].copy_from_slice(&0xeaff_fffeu32.to_le_bytes());
+        fs::write(&bios, program).expect("synthetic BIOS");
+        fs::write(&rom, [0; 192]).expect("synthetic ROM");
+        let mut session = Session::try_new(&bios, &rom, None).expect("session");
+        let mut audio = None;
+        let mut notice = None;
+        let mut revision = 123;
+        assert!(!super::handle_state_action(
+            Action::LoadState,
+            &mut session,
+            &mut audio,
+            &mut notice,
+            &mut revision
+        ));
+        assert_eq!(
+            notice.as_ref().expect("failure notice").message,
+            "LOAD FAILED"
+        );
+        assert!(!super::handle_state_action(
+            Action::SaveState,
+            &mut session,
+            &mut audio,
+            &mut notice,
+            &mut revision
+        ));
+        assert_eq!(notice.as_ref().expect("save notice").message, "STATE SAVED");
+        let saved_clocks = session.machine().clocks();
+        session.machine_mut().step().expect("advance");
+        assert!(super::handle_state_action(
+            Action::LoadState,
+            &mut session,
+            &mut audio,
+            &mut notice,
+            &mut revision
+        ));
+        assert_eq!(session.machine().clocks(), saved_clocks);
+        assert_eq!(revision, session.machine().save_revision());
+        assert_eq!(
+            notice.as_ref().expect("load notice").message,
+            "STATE LOADED"
+        );
+        // A non-state controller action must not save, load, or alter the notice.
+        assert!(!super::handle_state_action(
+            Action::R,
+            &mut session,
+            &mut audio,
+            &mut notice,
+            &mut revision
+        ));
+        assert_eq!(
+            notice.as_ref().expect("unchanged notice").message,
+            "STATE LOADED"
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
 
     fn reference_pixels(
         pixels: &[u32],

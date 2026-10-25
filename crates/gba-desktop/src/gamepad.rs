@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::io;
 use std::time::{Duration, Instant};
 
-const ACTIONS: [Action; 10] = [
+const ACTIONS: [Action; 12] = [
     Action::A,
     Action::B,
     Action::Select,
@@ -18,7 +18,11 @@ const ACTIONS: [Action; 10] = [
     Action::Down,
     Action::R,
     Action::L,
+    Action::SaveState,
+    Action::LoadState,
 ];
+const GBA_ACTION_COUNT: usize = 10;
+const GBA_BUTTON_MASK: u16 = 0x03ff;
 const CONTROL_COUNT: usize = 3;
 const AXIS_COUNT: usize = 64;
 const MENU_COMBO: u16 = bit(Action::Start) | bit(Action::Select);
@@ -40,10 +44,11 @@ pub(crate) struct GamepadBindings {
 }
 
 impl GamepadBindings {
-    pub(crate) const ACTIONS: [Action; 10] = ACTIONS;
+    pub(crate) const ACTIONS: [Action; 12] = ACTIONS;
 
     pub(crate) fn controls(&self, action: Action) -> &[Option<GamepadControl>; CONTROL_COUNT] {
-        &self.controls[action_index(action).expect("only GBA actions have controller bindings")]
+        &self.controls
+            [action_index(action).expect("only supported actions have controller bindings")]
     }
 
     pub(crate) fn rebind(
@@ -134,7 +139,9 @@ impl GamepadBindings {
         if lines.next() != Some(SETTINGS_MARKER.trim_end()) {
             return Err("invalid controller settings header".to_owned());
         }
-        let mut bindings = Self::default();
+        let mut bindings = Self {
+            controls: [[None; CONTROL_COUNT]; ACTIONS.len()],
+        };
         let mut seen = [false; ACTIONS.len()];
         let mut assigned = Vec::new();
         for line in lines {
@@ -151,6 +158,9 @@ impl GamepadBindings {
             let mut controls = [None; CONTROL_COUNT];
             let mut count = 0;
             for token in value.split(',') {
+                if value.is_empty() && index >= GBA_ACTION_COUNT {
+                    break;
+                }
                 if count == CONTROL_COUNT {
                     return Err("too many controller inputs for an action".to_owned());
                 }
@@ -162,14 +172,29 @@ impl GamepadBindings {
                 controls[count] = Some(control);
                 count += 1;
             }
-            if count == 0 {
+            if count == 0 && index < GBA_ACTION_COUNT {
                 return Err("controller action has no input".to_owned());
             }
             bindings.controls[index] = controls;
             seen[index] = true;
         }
-        if seen.contains(&false) {
+        if seen[..GBA_ACTION_COUNT].contains(&false) {
             return Err("missing controller action".to_owned());
+        }
+        // Older files have only the ten GBA actions. Add state shortcuts only
+        // where they do not conflict with an existing customized binding.
+        let defaults = Self::default();
+        for (index, seen) in seen.iter().enumerate().skip(GBA_ACTION_COUNT) {
+            if !seen {
+                let mut slot = 0;
+                for control in defaults.controls[index].iter().flatten() {
+                    if !assigned.contains(control) {
+                        bindings.controls[index][slot] = Some(*control);
+                        assigned.push(*control);
+                        slot += 1;
+                    }
+                }
+            }
         }
         Ok(bindings)
     }
@@ -208,6 +233,16 @@ impl Default for GamepadBindings {
                 ],
                 [key(KeyCode::BTN_TR), None, None],
                 [key(KeyCode::BTN_TL), None, None],
+                [
+                    key(KeyCode::BTN_TR2),
+                    positive(AbsoluteAxisCode::ABS_RZ),
+                    None,
+                ],
+                [
+                    key(KeyCode::BTN_TL2),
+                    positive(AbsoluteAxisCode::ABS_Z),
+                    None,
+                ],
             ],
         }
     }
@@ -304,8 +339,7 @@ impl GamepadInput {
                             EventSummary::Key(_, key, value) => {
                                 let code = key.code();
                                 let control = GamepadControl::Key(code);
-                                if value == 1 {
-                                    self.pressed_keys.insert(code);
+                                if value == 1 && self.pressed_keys.insert(code) {
                                     push_unique(&mut pressed_controls, control);
                                     if let Some(action) = bindings.action_for(control) {
                                         event_pressed |= bit(action);
@@ -320,16 +354,12 @@ impl GamepadInput {
                                 if index >= AXIS_COUNT {
                                     continue;
                                 }
-                                self.axes[index] = value;
-                                for control in [
-                                    GamepadControl::AxisNegative(code),
-                                    GamepadControl::AxisPositive(code),
-                                ] {
-                                    if control_active(control, &self.axes, &self.axis_ranges) {
-                                        push_unique(&mut pressed_controls, control);
-                                        if let Some(action) = bindings.action_for(control) {
-                                            event_pressed |= bit(action);
-                                        }
+                                let rising =
+                                    update_axis(&mut self.axes, &self.axis_ranges, code, value);
+                                for control in rising {
+                                    push_unique(&mut pressed_controls, control);
+                                    if let Some(action) = bindings.action_for(control) {
+                                        event_pressed |= bit(action);
                                     }
                                 }
                             }
@@ -348,10 +378,21 @@ impl GamepadInput {
             self.next_discovery = Instant::now() + RECONNECT_INTERVAL;
         }
 
+        self.finish_poll(bindings, event_pressed, pressed_controls)
+    }
+
+    fn finish_poll(
+        &mut self,
+        bindings: &GamepadBindings,
+        event_pressed: u16,
+        pressed_controls: Vec<GamepadControl>,
+    ) -> GamepadPoll {
         let raw_buttons = bindings.mask(&self.pressed_keys, &self.axes, &self.axis_ranges);
         let menu_pressed =
             raw_buttons & MENU_COMBO == MENU_COMBO && self.previous_mask & MENU_COMBO != MENU_COMBO;
-        let pressed = event_pressed | (raw_buttons & !self.previous_mask);
+        // One action edge even if a trigger reports both a key and an axis,
+        // or emits further analog values while held. Retain quick tap events.
+        let pressed = (event_pressed | raw_buttons) & !self.previous_mask;
         self.previous_mask = raw_buttons;
         self.suppressed_buttons &= raw_buttons;
         let mut buttons = raw_buttons & !self.suppressed_buttons;
@@ -359,7 +400,7 @@ impl GamepadInput {
             buttons &= !MENU_COMBO;
         }
         GamepadPoll {
-            buttons,
+            buttons: buttons & GBA_BUTTON_MASK,
             menu_pressed,
             pressed_actions: ACTIONS
                 .into_iter()
@@ -429,9 +470,13 @@ fn action_index(action: Action) -> Option<usize> {
 }
 
 const fn bit(action: Action) -> u16 {
-    match action.bit() {
-        Some(bit) => bit,
-        None => 0,
+    match action {
+        Action::SaveState => 1 << 10,
+        Action::LoadState => 1 << 11,
+        _ => match action.bit() {
+            Some(bit) => bit,
+            None => 0,
+        },
     }
 }
 
@@ -451,6 +496,11 @@ fn axis_position(
             (-32768, 32767)
         }
     });
+    // Standard trigger axes are unipolar: resting at minimum is not a
+    // negative-direction press, including while capturing a new binding.
+    if matches!(code, 0x02 | 0x05) && ranges[index].is_some() && maximum > minimum {
+        return (axes[index] as f32 - minimum as f32) / (maximum as f32 - minimum as f32);
+    }
     let half_range = (maximum as f32 - minimum as f32) * 0.5;
     if half_range <= 0.0 {
         return 0.0;
@@ -468,6 +518,27 @@ fn control_active(
         GamepadControl::AxisNegative(code) => axis_position(code, axes, ranges) < -STICK_DEADZONE,
         GamepadControl::AxisPositive(code) => axis_position(code, axes, ranges) > STICK_DEADZONE,
     }
+}
+
+fn update_axis(
+    axes: &mut [i32; AXIS_COUNT],
+    ranges: &[Option<(i32, i32)>; AXIS_COUNT],
+    code: u16,
+    value: i32,
+) -> Vec<GamepadControl> {
+    let controls = [
+        GamepadControl::AxisNegative(code),
+        GamepadControl::AxisPositive(code),
+    ];
+    let previous = controls.map(|control| control_active(control, axes, ranges));
+    axes[usize::from(code)] = value;
+    controls
+        .into_iter()
+        .zip(previous)
+        .filter_map(|(control, was_active)| {
+            (!was_active && control_active(control, axes, ranges)).then_some(control)
+        })
+        .collect()
 }
 
 fn push_unique(controls: &mut Vec<GamepadControl>, control: GamepadControl) {
@@ -521,6 +592,8 @@ fn control_name(control: GamepadControl) -> String {
             0x134 => "WEST".to_owned(),
             0x136 => "TL".to_owned(),
             0x137 => "TR".to_owned(),
+            0x138 => "LT".to_owned(),
+            0x139 => "RT".to_owned(),
             0x13a => "SELECT".to_owned(),
             0x13b => "START".to_owned(),
             0x220 => "DUP".to_owned(),
@@ -538,6 +611,8 @@ fn control_name(control: GamepadControl) -> String {
             let axis = match code {
                 0x00 => "LX",
                 0x01 => "LY",
+                0x02 => "LT",
+                0x05 => "RT",
                 0x10 => "HX",
                 0x11 => "HY",
                 _ => return format!("A{code:02X}{direction}"),
@@ -551,7 +626,7 @@ fn control_name(control: GamepadControl) -> String {
 mod tests {
     use super::{
         GamepadBindings, GamepadControl, GamepadInput, action_index, bit, control_active,
-        decode_settings, encode_settings,
+        decode_settings, encode_settings, update_axis,
     };
     use crate::keybindings::{Action, KeyBindings};
     use crate::speed::Speed;
@@ -616,6 +691,166 @@ mod tests {
         );
         let invalid = format!("{}gba-speed-v1\n3\n", keyboard.encode());
         assert!(decode_settings(&invalid).is_err());
+    }
+
+    #[test]
+    fn legacy_controller_files_add_state_defaults_without_stealing_inputs() {
+        let legacy = GamepadBindings::default()
+            .encode()
+            .lines()
+            .filter(|line| !line.starts_with("SAVE STATE=") && !line.starts_with("LOAD STATE="))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(
+            GamepadBindings::decode(&legacy).expect("legacy settings"),
+            GamepadBindings::default()
+        );
+        let partial = legacy.replace("BUTTON R=K0137", "BUTTON R=K0139");
+        let migrated = GamepadBindings::decode(&partial).expect("partially occupied trigger");
+        assert_eq!(
+            migrated.controls(Action::SaveState)[0],
+            Some(GamepadControl::AxisPositive(AbsoluteAxisCode::ABS_RZ.0))
+        );
+        assert_eq!(
+            GamepadBindings::decode(&migrated.encode()).expect("partial round trip"),
+            migrated
+        );
+        // A legacy customization can already use both save-state trigger inputs.
+        let legacy = legacy.replace("BUTTON R=K0137", "BUTTON R=K0139,A0005+");
+        let migrated = GamepadBindings::decode(&legacy).expect("custom legacy settings");
+        assert!(
+            migrated
+                .controls(Action::SaveState)
+                .iter()
+                .all(Option::is_none)
+        );
+        assert_eq!(
+            migrated.controls(Action::R)[0],
+            Some(GamepadControl::Key(KeyCode::BTN_TR2.code()))
+        );
+        assert_eq!(
+            GamepadBindings::decode(&migrated.encode()).expect("unbound round trip"),
+            migrated
+        );
+        assert!(GamepadBindings::decode(&legacy.replace("BUTTON A=K0130", "BUTTON A=")).is_err());
+    }
+
+    #[test]
+    fn state_keys_are_one_shot_host_actions_and_keep_gba_shoulders() {
+        let bindings = GamepadBindings::default();
+        let mut input = GamepadInput::new();
+        for (key, action) in [
+            (KeyCode::BTN_TR2, Action::SaveState),
+            (KeyCode::BTN_TL2, Action::LoadState),
+        ] {
+            input.pressed_keys.insert(key.code());
+            let poll = input.finish_poll(&bindings, bit(action), Vec::new());
+            assert_eq!(poll.pressed_actions, vec![action]);
+            assert_eq!(poll.buttons, 0);
+            assert!(
+                input
+                    .finish_poll(&bindings, bit(action), Vec::new())
+                    .pressed_actions
+                    .is_empty()
+            );
+            input.pressed_keys.clear();
+            input.finish_poll(&bindings, 0, Vec::new());
+        }
+        input
+            .pressed_keys
+            .extend([KeyCode::BTN_TR.code(), KeyCode::BTN_TL.code()]);
+        assert_eq!(
+            input.finish_poll(&bindings, 0, Vec::new()).buttons,
+            bit(Action::R) | bit(Action::L)
+        );
+        input.pressed_keys.clear();
+        input.finish_poll(&bindings, 0, Vec::new());
+        // A press/release wholly within one poll is still a single action.
+        assert_eq!(
+            input
+                .finish_poll(&bindings, bit(Action::SaveState), Vec::new())
+                .pressed_actions,
+            vec![Action::SaveState]
+        );
+        input.pressed_keys.insert(KeyCode::BTN_TR2.code());
+        input.suppress_held(&bindings);
+        assert!(
+            input
+                .finish_poll(&bindings, bit(Action::SaveState), Vec::new())
+                .pressed_actions
+                .is_empty()
+        );
+        input.clear_state();
+        assert_eq!(input.previous_mask, 0);
+    }
+
+    #[test]
+    fn analog_triggers_cross_threshold_once_and_do_not_capture_release() {
+        let bindings = GamepadBindings::default();
+        for (code, action) in [
+            (AbsoluteAxisCode::ABS_RZ.0, Action::SaveState),
+            (AbsoluteAxisCode::ABS_Z.0, Action::LoadState),
+        ] {
+            let mut input = GamepadInput::new();
+            input.axis_ranges[usize::from(code)] = Some((0, 255));
+            for (value, expected) in [
+                (0, false),
+                (40, false),
+                (160, true),
+                (200, false),
+                (255, false),
+                (0, false),
+                (255, true),
+            ] {
+                let controls = update_axis(&mut input.axes, &input.axis_ranges, code, value);
+                let event_pressed = controls
+                    .iter()
+                    .filter_map(|control| bindings.action_for(*control))
+                    .fold(0, |mask, action| mask | bit(action));
+                let poll = input.finish_poll(&bindings, event_pressed, controls);
+                assert_eq!(
+                    poll.pressed_actions.contains(&action),
+                    expected,
+                    "axis={code} value={value}"
+                );
+                assert_eq!(poll.pressed_controls.len(), usize::from(expected));
+                assert_eq!(poll.buttons, 0);
+            }
+            // Some devices report an additional digital key for the same press.
+            assert!(
+                input
+                    .finish_poll(&bindings, bit(action), Vec::new())
+                    .pressed_actions
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn state_bindings_rebind_round_trip_and_reject_conflicts() {
+        let mut bindings = GamepadBindings::default();
+        let paddle = GamepadControl::Key(0x2c0);
+        bindings
+            .rebind(Action::SaveState, paddle)
+            .expect("free paddle");
+        assert_eq!(bindings.action_for(paddle), Some(Action::SaveState));
+        assert!(bindings.rebind(Action::LoadState, paddle).is_err());
+        assert!(
+            bindings
+                .rebind(
+                    Action::SaveState,
+                    GamepadControl::Key(KeyCode::BTN_TR.code())
+                )
+                .is_err()
+        );
+        let trigger = GamepadControl::AxisPositive(AbsoluteAxisCode::ABS_RZ.0);
+        bindings
+            .rebind(Action::LoadState, trigger)
+            .expect("save trigger was released by rebinding");
+        assert_eq!(
+            GamepadBindings::decode(&bindings.encode()).expect("round trip"),
+            bindings
+        );
     }
 
     #[test]

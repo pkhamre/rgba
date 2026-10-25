@@ -112,12 +112,23 @@ Saving or loading a state shows the result on screen. Screenshots go under
 
 Gamepads require read access to `/dev/input/event*`. The D-pad and left stick
 control movement; the bottom face button maps to A, the right face button to B,
-and the shoulder buttons to L/R. Start + Select opens the options menu.
+and RB/LB to the GBA R/L buttons. RT saves the quick state; LT loads it.
+State shortcuts fire once per press, not repeatedly while a trigger is held.
+Start + Select opens the options menu.
 
 In the library and menus, use the D-pad to navigate, A/Start to select, and B to
 go back (or exit the library). Choose **PAD KEYBINDS** to assign a button or axis
-to a GBA action. Escape cancels; Reset Defaults restores the layout. Keyboard
-and gamepad bindings are separate.
+to a GBA action, **SAVE STATE**, or **LOAD STATE**. Select the action, then
+press the desired button or trigger. Escape cancels; Reset Defaults restores
+the layout. Keyboard and gamepad bindings are separate and saved per game.
+Inputs already assigned to another action are rejected; reassign that action
+first if you want to reuse its button.
+
+RT/LT support standard Linux trigger buttons or Z/RZ analog axes. Extra buttons
+such as R4/L4 can be captured if the controller exposes distinct Linux inputs;
+buttons that mirror another button cannot be assigned separately. Existing
+controller settings retain their GBA bindings; new state shortcuts use only
+trigger inputs not already assigned in those settings.
 
 ## Saves and settings
 

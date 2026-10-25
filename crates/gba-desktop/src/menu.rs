@@ -584,6 +584,12 @@ mod tests {
         let mut menu = MenuState::default();
         let mut keyboard = KeyBindings::default();
         let mut gamepad = GamepadBindings::default();
+        for action in [Action::SaveState, Action::LoadState] {
+            assert_eq!(
+                pad_action(&mut menu, action, &mut keyboard, &mut gamepad),
+                Command::None
+            );
+        }
         assert_eq!(
             pad_action(&mut menu, Action::Down, &mut keyboard, &mut gamepad),
             Command::None
@@ -616,6 +622,51 @@ mod tests {
             gamepad.controls(Action::A)[0],
             Some(GamepadControl::Key(KeyCode::BTN_NORTH.code()))
         );
+    }
+
+    #[test]
+    fn state_controller_bindings_are_captured_cancelled_and_reset_in_menu() {
+        let mut menu = MenuState::default();
+        let mut keyboard = KeyBindings::default();
+        let mut gamepad = GamepadBindings::default();
+        for _ in 0..3 {
+            pad_action(&mut menu, Action::Down, &mut keyboard, &mut gamepad);
+        }
+        pad_action(&mut menu, Action::A, &mut keyboard, &mut gamepad);
+        for _ in 0..10 {
+            pad_action(&mut menu, Action::Down, &mut keyboard, &mut gamepad);
+        }
+        for (action, code) in [(Action::SaveState, 0x2c0), (Action::LoadState, 0x2c1)] {
+            pad_action(&mut menu, Action::A, &mut keyboard, &mut gamepad);
+            assert!(menu.is_capturing_controller());
+            assert_eq!(
+                menu.handle_gamepad_control(
+                    GamepadControl::Key(KeyCode::BTN_TR.code()),
+                    &mut gamepad
+                ),
+                Command::None
+            );
+            assert!(menu.is_capturing_controller());
+            assert_eq!(
+                menu.handle_gamepad_control(GamepadControl::Key(code), &mut gamepad),
+                Command::SettingsChanged
+            );
+            assert_eq!(gamepad.controls(action)[0], Some(GamepadControl::Key(code)));
+            // The larger binding list can still be rendered while scrolled.
+            assert_eq!(
+                menu.render(&vec![0; 240 * 160], &keyboard, &gamepad).len(),
+                240 * 160
+            );
+            pad_action(&mut menu, Action::A, &mut keyboard, &mut gamepad);
+            key(&mut menu, 0xff1b, &mut keyboard, &mut gamepad);
+            assert!(!menu.is_capturing_controller());
+            pad_action(&mut menu, Action::Down, &mut keyboard, &mut gamepad);
+        }
+        assert_eq!(
+            pad_action(&mut menu, Action::A, &mut keyboard, &mut gamepad),
+            Command::SettingsChanged
+        );
+        assert_eq!(gamepad, GamepadBindings::default());
     }
 
     #[test]
