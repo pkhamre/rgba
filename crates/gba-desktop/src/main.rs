@@ -1,6 +1,7 @@
 //! Linux X11/XWayland emulator preview frontend.
 
 mod arguments;
+mod debug_log;
 mod desktop;
 mod frame_cache;
 mod frame_pacing;
@@ -17,6 +18,14 @@ use std::env;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    match debug_log::launch() {
+        Ok(Some(status)) => return status,
+        Ok(None) => {}
+        Err(error) => {
+            eprintln!("error: cannot enable debug logging: {error}");
+            return ExitCode::FAILURE;
+        }
+    }
     if env::args()
         .skip(1)
         .any(|value| value == "--help" || value == "-h")

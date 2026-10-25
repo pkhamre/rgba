@@ -10,7 +10,7 @@ sh scripts/check.sh
 sh scripts/cargo.sh test --workspace --release
 ```
 
-Current standard result: **181 Rust unit/integration tests, one doctest, and 26
+Current standard result: **185 Rust unit/integration tests, one doctest, and 26
 Python tool tests pass**. Two ignored optional tests require reference assets.
 An additional ignored presentation test requires a dedicated Xvfb display.
 The standard tests use synthetic data only; CI needs no BIOS/game/test ROM.
@@ -43,6 +43,25 @@ that it fires only once, then rebind SAVE STATE / LOAD STATE in PAD KEYBINDS.
 Restart the game to verify persistence. Confirm RB/LB still reach the game,
 menu capture does not save/load, and an exposed R4/L4 can be assigned. Extra
 buttons that mirror existing inputs cannot be distinguished by evdev.
+
+## Opt-in desktop debug logs
+
+`--debug` re-launches the desktop with stdout and stderr redirected to a unique,
+exclusive-created `0600` log in `$XDG_STATE_HOME/rgba/logs/`, falling back to
+`$HOME/.local/state/rgba/logs/`. The parent waits for the child, including when
+running from an AppImage mount, and returns its exit code (or 128 + signal).
+No new dependency or unsafe descriptor manipulation is required. Logs are
+opt-in and contain local paths; they are not automatically pruned.
+
+Asset-free tests cover XDG precedence and HOME fallback, empty/relative XDG
+values, missing HOME, unusable log directories, private file permissions,
+separate per-run logs, stdout/help and stderr/argument-error capture, runtime
+library/display failures, child exit-code propagation, and unchanged normal
+output without `--debug`. Standard checks, release workspace tests, and the
+desktop release build pass; the existing host audio `sleep: not found` warnings
+remain. The optional strict CPU comparison was not rerun and retains its known
+mismatches. Actual graphical/AppImage launch testing remains pending; subprocess
+capture is tested using the desktop executable directly.
 
 ## Linux release packaging
 

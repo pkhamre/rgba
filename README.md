@@ -151,6 +151,28 @@ that save to disk; it does not create an emulator state. F6/F7 use a separate
 versioned quick-state file. Loading a state also writes its cartridge
 backup to the configured save file. See [save and RTC policy](docs/TEST_BUILD.md).
 
+## Debug logging
+
+Add `--debug` to capture the desktop app's stdout and stderr, including startup
+errors, in a new file under `$XDG_STATE_HOME/rgba/logs/` (default
+`~/.local/state/rgba/logs/`). Empty or relative `XDG_STATE_HOME` values fall back
+to the default. Logs include the application version, arguments, working
+directory, and exit status. Without `--debug`, output behaves as before.
+
+For a desktop launcher, append `--debug` to its `Exec=` line. Use absolute paths
+there: desktop launchers do not expand `$HOME` or `~`. For example:
+
+```ini
+Exec=/home/you/apps/rgba.AppImage --bios /home/you/.local/share/rgba/gba_bios.bin --scale 4 --debug
+```
+
+Each run prints the log path to stderr and redirects subsequent output to the
+file rather than the terminal. Build messages and AppImage loader errors that
+occur before the application starts are not captured. Log files are created owner-readable/writable
+only (`0600`); review them before sharing because they can contain local paths.
+Old logs are not deleted automatically. If the log cannot be created, startup
+fails with an error rather than silently running without logging.
+
 ## Build from source
 
 Install [Rust via rustup](https://rustup.rs/), a native Linux C linker/toolchain,

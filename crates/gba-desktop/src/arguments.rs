@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 pub(crate) const USAGE: &str = "\
-gba-desktop --bios PATH [--rom PATH] [--save PATH] [--scale 1..6] [--frames COUNT] [--audio auto|pipewire|pulse|alsa|off]
+gba-desktop --bios PATH [--rom PATH] [--save PATH] [--scale 1..6] [--frames COUNT] [--audio auto|pipewire|pulse|alsa|off] [--debug]
 Linux X11/XWayland preview. Audio needs pw-cat, pacat, or aplay installed.
 Controls: arrows/WASD = D-pad; Z = A; X = B; Enter = Start; Backspace = Select;
 Q/E = L/R; Space = pause; Tab = fast forward; F5 = flush save;
@@ -11,7 +11,9 @@ Without --rom, games are scanned from $XDG_DATA_HOME/rgba/games (default
 ~/.local/share/rgba/games). Saves and states use content-hash names there;
 settings use $XDG_CONFIG_HOME/rgba/settings (default ~/.config/rgba/settings).
 --save overrides the cartridge-save path for an explicit --rom.
---frames exits after a bounded number of frames (useful for Xvfb smoke tests).";
+--frames exits after a bounded number of frames (useful for Xvfb smoke tests).
+--debug redirects stdout/stderr to $XDG_STATE_HOME/rgba/logs (default
+~/.local/state/rgba/logs), including startup errors. A new log is created per run.";
 
 #[derive(Debug)]
 pub(crate) struct Arguments {
@@ -31,7 +33,15 @@ impl Arguments {
         let mut scale = None;
         let mut frames = None;
         let mut audio = None;
+        let mut debug = false;
         while let Some(option) = arguments.next() {
+            if option == "--debug" {
+                if debug {
+                    return Err("duplicate option --debug".to_owned());
+                }
+                debug = true;
+                continue;
+            }
             if !matches!(
                 option.as_str(),
                 "--bios" | "--rom" | "--save" | "--scale" | "--frames" | "--audio"
@@ -98,12 +108,15 @@ mod tests {
             2
         );
         assert_eq!(parse(&["--bios", "b"]).expect("library mode").rom, None);
+        assert!(parse(&["--debug", "--bios", "b"]).is_ok());
+        assert!(parse(&["--bios", "b", "--debug"]).is_ok());
         for args in [
             vec![],
             vec!["--bios", "b", "--rom", "r", "--scale", "0"],
             vec!["--bios", "b", "--rom", "r", "--frames", "0"],
             vec!["--rom", "r", "--rom", "r"],
             vec!["--bios", "b", "--save", "s"],
+            vec!["--bios", "b", "--debug", "--debug"],
         ] {
             assert!(parse(&args).is_err());
         }
