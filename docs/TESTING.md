@@ -209,6 +209,14 @@ synthetic Flash, RTC, save, and framebuffer fixtures. The separate
 now verifies actual game-menu save/restart/Continue/re-save/Continue with
 isolated saves and captured images; see VALIDATION.md.
 
+## Window resizing
+
+The game and library windows handle X11 configure events and fit the image to the
+window while preserving its aspect ratio. Unit tests cover fit calculations and
+integer-scale transforms. Interactive resizing and fractional-scale XRender
+output have not been verified on a graphical display in this environment. Without
+compatible XRender support, the windows retain their fixed initial size.
+
 ## Optional X11 scaling regression
 
 This asset-free test checks every destination pixel at scales 1..6. Only run

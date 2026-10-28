@@ -18,7 +18,7 @@ sh scripts/play.sh
 sh scripts/play.sh path/to/game.gba --save path/to/game.sav
 ```
 
-Default scale is 3; supported integer scales are 1–6. Window resizing is disabled.
+Default scale is 3; initial integer scales are 1–6. With XRender support, the game and library windows can be resized; the image uses nearest-neighbor scaling and preserves the 3:2 aspect ratio with black bars. Without a compatible XRender format, windows remain fixed at the initial scale.
 For explicit asset paths instead of the convenience launcher:
 
 ```sh

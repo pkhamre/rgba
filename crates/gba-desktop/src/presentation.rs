@@ -15,6 +15,8 @@ pub(crate) struct Presentation {
     gc: Gcontext,
     width: u16,
     height: u16,
+    window_width: u16,
+    window_height: u16,
 }
 
 impl Presentation {
@@ -27,7 +29,7 @@ impl Presentation {
         scale: u16,
     ) -> Result<Self, Box<dyn Error>> {
         let mut format = None;
-        if scale > 1 && connection.extension_information("RENDER")?.is_some() {
+        if connection.extension_information("RENDER")?.is_some() {
             let version = connection.render_query_version(0, 11)?.reply()?;
             if version.major_version > 0 || version.minor_version >= 6 {
                 let formats = connection.render_query_pict_formats()?.reply()?;
@@ -61,7 +63,7 @@ impl Presentation {
                 .render_create_picture(destination, window, format, &CreatePictureAux::new())?
                 .check()?;
             connection
-                .render_set_picture_transform(source, nearest_transform(scale))?
+                .render_set_picture_transform(source, nearest_transform(240 * scale, 160 * scale))?
                 .check()?;
             connection
                 .render_set_picture_filter(source, b"nearest", &[])?
@@ -90,11 +92,37 @@ impl Presentation {
             gc,
             width: 240 * scale,
             height: 160 * scale,
+            window_width: 240 * scale,
+            window_height: 160 * scale,
         })
+    }
+
+    pub(crate) fn resizable(&self) -> bool {
+        self.pictures.is_some()
+    }
+
+    pub(crate) fn resize(
+        &mut self,
+        connection: &impl Connection,
+        width: u16,
+        height: u16,
+    ) -> Result<(), ConnectionError> {
+        if let Some((source, _)) = self.pictures {
+            self.window_width = width;
+            self.window_height = height;
+            let (width, height) = fitted_size(width, height);
+            self.width = width;
+            self.height = height;
+            connection.render_set_picture_transform(source, nearest_transform(width, height))?;
+        }
+        Ok(())
     }
 
     pub(crate) fn present(&self, connection: &impl Connection) -> Result<(), ConnectionError> {
         if let Some((source, destination)) = self.pictures {
+            connection.clear_area(false, self.window, 0, 0, 0, 0)?;
+            let x = ((self.window_width - self.width) / 2) as i16;
+            let y = ((self.window_height - self.height) / 2) as i16;
             connection.render_composite(
                 PictOp::SRC,
                 source,
@@ -104,8 +132,8 @@ impl Presentation {
                 0,
                 0,
                 0,
-                0,
-                0,
+                x,
+                y,
                 self.width,
                 self.height,
             )?;
@@ -135,14 +163,23 @@ impl Presentation {
     }
 }
 
-fn nearest_transform(scale: u16) -> Transform {
-    let step = 65536 / i32::from(scale);
+fn fitted_size(width: u16, height: u16) -> (u16, u16) {
+    if u32::from(width) * 2 <= u32::from(height) * 3 {
+        (width.max(1), (u32::from(width) * 2 / 3).max(1) as u16)
+    } else {
+        ((u32::from(height) * 3 / 2).max(1) as u16, height.max(1))
+    }
+}
+
+fn nearest_transform(width: u16, height: u16) -> Transform {
+    let step_x = 240 * 65536 / i32::from(width);
+    let step_y = 160 * 65536 / i32::from(height);
     Transform {
-        matrix11: step,
+        matrix11: step_x,
         matrix12: 0,
         matrix13: 0,
         matrix21: 0,
-        matrix22: step,
+        matrix22: step_y,
         matrix23: 0,
         matrix31: 0,
         matrix32: 0,
@@ -273,9 +310,16 @@ mod tests {
     }
 
     #[test]
+    fn fitted_size_preserves_aspect_and_fits_window() {
+        assert_eq!(super::fitted_size(800, 600), (800, 533));
+        assert_eq!(super::fitted_size(1000, 400), (600, 400));
+        assert_eq!(super::fitted_size(1, 1), (1, 1));
+    }
+
+    #[test]
     fn fixed_point_transform_maps_every_destination_center_to_nearest_source_pixel() {
         for scale in 1..=6 {
-            let transform = super::nearest_transform(scale);
+            let transform = super::nearest_transform(240 * scale, 160 * scale);
             for x in 0..240 * i32::from(scale) {
                 let source = ((2 * x + 1) * transform.matrix11 / 2) / 65536;
                 assert_eq!(source, x / i32::from(scale), "scale={scale}, x={x}");

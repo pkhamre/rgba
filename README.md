@@ -12,7 +12,7 @@ Some independent CPU reference comparisons fail; see
 
 ## Features
 
-- Linux X11 desktop, including Wayland sessions with XWayland, with integer scaling.
+- Linux X11 desktop, including Wayland sessions with XWayland, with resizable nearest-neighbor scaling when XRender is available.
 - Keyboard controls and hot-plugged USB gamepads through Linux evdev.
 - Audio through PipeWire, PulseAudio, or ALSA command-line players.
 - Cartridge saves, a quick-save-state slot per game, and cartridge RTC support.

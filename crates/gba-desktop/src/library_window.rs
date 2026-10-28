@@ -64,15 +64,15 @@ pub(crate) fn choose(
             0,
             WindowClass::INPUT_OUTPUT,
             screen.root_visual,
-            &CreateWindowAux::new()
-                .background_pixel(0)
-                .event_mask(EventMask::EXPOSURE | EventMask::KEY_PRESS),
+            &CreateWindowAux::new().background_pixel(0).event_mask(
+                EventMask::EXPOSURE | EventMask::KEY_PRESS | EventMask::STRUCTURE_NOTIFY,
+            ),
         )?
         .check()?;
     connection
         .create_gc(gc, window, &CreateGCAux::new())?
         .check()?;
-    let presentation = Presentation::create(
+    let mut presentation = Presentation::create(
         &connection,
         window,
         gc,
@@ -80,6 +80,23 @@ pub(crate) fn choose(
         screen.root_visual,
         args.scale,
     )?;
+    if !presentation.resizable() {
+        let mut hints = [0; 18];
+        hints[0] = (1 << 4) | (1 << 5);
+        hints[5] = u32::from(width);
+        hints[6] = u32::from(height);
+        hints[7] = u32::from(width);
+        hints[8] = u32::from(height);
+        connection
+            .change_property32(
+                PropMode::REPLACE,
+                window,
+                AtomEnum::WM_NORMAL_HINTS,
+                AtomEnum::WM_SIZE_HINTS,
+                &hints,
+            )?
+            .check()?;
+    }
     let title_atom = AtomEnum::WM_NAME;
     connection
         .change_property8(
@@ -170,6 +187,9 @@ pub(crate) fn choose(
                     running = false;
                 }
                 Event::DestroyNotify(_) => running = false,
+                Event::ConfigureNotify(event) if event.window == window => {
+                    presentation.resize(&connection, event.width, event.height)?;
+                }
                 Event::KeyPress(event) => {
                     let symbol = key_symbol(
                         usize::from(event.detail),
