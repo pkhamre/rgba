@@ -280,7 +280,16 @@ fn draw_library(
 
 fn library_pixels(games: &[Game], selected: usize) -> Vec<u32> {
     let mut pixels = vec![0x101820; 240 * 160];
-    draw_text(&mut pixels, 72, 12, "GAME LIBRARY", 0x80d8ff);
+    let title = "GAME LIBRARY";
+    draw_text(
+        &mut pixels,
+        (240 - title.len() * 6) / 2,
+        12,
+        title,
+        0x80d8ff,
+    );
+    let version = format!("V{}", env!("CARGO_PKG_VERSION"));
+    draw_text(&mut pixels, 236 - version.len() * 6, 12, &version, 0x90a0b0);
     for x in 10..230 {
         pixels[30 * 240 + x] = 0xffffff;
     }
