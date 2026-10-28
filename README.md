@@ -253,6 +253,9 @@ an end-to-end run on GitHub to verify the hosted build and release upload.
 
 ## Development and documentation
 
+See [CONTRIBUTION.md](CONTRIBUTION.md) for contributing through merge requests
+(GitHub pull requests), and [AGENTS.md](AGENTS.md) for coding-agent instructions.
+
 - `crates/gba-core`: deterministic CPU, bus, devices, renderer, and cartridge.
 - `crates/gba-host`: asset loading, atomic saves, audio output, and screenshots.
 - `crates/gba-desktop`: X11 presentation, input, menus, library, and pacing.
