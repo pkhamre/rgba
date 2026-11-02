@@ -23,6 +23,17 @@ failure without changing the running machine or save file. Desktop menu, game
 library, keyboard/gamepad controls, and state-result notices are implemented and
 have separate coverage documented in the desktop validation section below.
 
+## Library ROM import
+
+Asset-free tests cover browsing directories, selecting and importing a ROM,
+cancellation, duplicate content and filename conflicts, invalid short ROMs,
+and preserving existing files. The standard checks and release workspace tests
+pass. Interactive browser operation on an X11 display has not been verified in
+this environment (Xvfb is unavailable). The existing bitmap font does not render
+all filename characters, including non-ASCII characters; files remain accessible
+but their displayed names can be incomplete. The optional strict CPU reference
+comparison was not rerun and retains its documented mismatches.
+
 ## Headless performance tooling
 
 See [PERFORMANCE.md](PERFORMANCE.md) for repeatable benchmarks and Linux perf

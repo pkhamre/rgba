@@ -12,7 +12,7 @@ BIOS, and at least one supported ROM (in the library folder or provided with
 `--rom`). A native linker is needed when building normally.
 
 ```sh
-# Scan the XDG game folder; auto-start one game, choose when there are several
+# Scan the XDG game folder and show the library
 sh scripts/play.sh
 # Launch a ROM directly instead
 sh scripts/play.sh path/to/game.gba --save path/to/game.sav
@@ -46,9 +46,12 @@ Reset Defaults. Focus loss releases held keys.
 
 Without `--rom`, ROMs are scanned directly inside `$XDG_DATA_HOME/rgba/games`
 (default `~/.local/share/rgba/games`); supported extensions are `.gba`, `.agb`,
-and `.bin`. One game starts automatically; multiple games show a chooser using
-filename stems, with long names wrapped across lines. Copy ROMs into the folder
-and restart to rescan. Saves/backups and states are stored
+and `.bin`. The library always shows a chooser using filename stems, with long
+names wrapped across lines. Load ROM opens a built-in browser starting at HOME;
+select a supported file to copy it into the games folder and launch it. Existing
+filenames and duplicate ROM contents are rejected without overwriting. Copying
+files into the folder manually requires a restart or return to the library to
+rescan. Saves/backups and states are stored
 under `$XDG_DATA_HOME/rgba/saves` and `states`, named by ROM SHA-256. Settings
 are under `$XDG_CONFIG_HOME/rgba/settings`. Missing ROM-side `.sav`, `.sav.bak`,
 `.state`, and `.settings` files are copied on first launch and left in place;

@@ -1,13 +1,15 @@
-//! X11 game-selection window shown when the library has multiple games.
+//! X11 game library and built-in ROM file browser.
 
 use crate::arguments::Arguments;
-use crate::game_library::Game;
+use crate::game_library::{self, Game, StoragePaths};
 use crate::gamepad::{GamepadBindings, GamepadInput};
 use crate::keybindings::Action;
 use crate::menu::draw_text;
 use crate::presentation::Presentation;
 use std::error::Error;
+use std::fs;
 use std::io;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::thread;
 use std::time::Duration;
@@ -23,6 +25,7 @@ use x11rb::wrapper::ConnectionExt as WrapperConnectionExt;
 pub(crate) fn choose(
     args: &Arguments,
     games: &[Game],
+    storage: &StoragePaths,
     gamepad: &mut GamepadInput,
 ) -> Result<Option<Game>, Box<dyn Error>> {
     let (connection, screen_number) = RustConnection::connect(None).map_err(|error| {
@@ -144,6 +147,8 @@ pub(crate) fn choose(
     connection.flush()?;
 
     let mut selected = 0usize;
+    let mut browser: Option<Browser> = None;
+    let mut notice = String::new();
     let mut result = None;
     let mut running = true;
     let gamepad_bindings = GamepadBindings::default();
@@ -151,15 +156,16 @@ pub(crate) fn choose(
     while running {
         let gamepad_poll = gamepad.poll(&gamepad_bindings);
         for action in gamepad_poll.pressed_actions {
-            match selection_action(action, selected, games.len()) {
-                Some(SelectionAction::Move(index)) => selected = index,
-                Some(SelectionAction::Select(index)) => {
-                    result = games.get(index).cloned();
-                    running = false;
-                }
-                Some(SelectionAction::Cancel) => running = false,
-                None => {}
-            }
+            handle_action(
+                action,
+                games,
+                storage,
+                &mut browser,
+                &mut selected,
+                &mut notice,
+                &mut result,
+                &mut running,
+            );
         }
         if !running {
             break;
@@ -174,7 +180,9 @@ pub(crate) fn choose(
             byte_order,
             [visual.red_mask, visual.green_mask, visual.blue_mask],
             games,
+            browser.as_ref(),
             selected,
+            &notice,
         )?;
         connection.flush()?;
         let mut received = false;
@@ -197,17 +205,24 @@ pub(crate) fn choose(
                         columns,
                         &mapping.keysyms,
                     );
-                    match symbol {
-                        0xff52 if !games.is_empty() => {
-                            selected = (selected + games.len() - 1) % games.len();
-                        }
-                        0xff54 if !games.is_empty() => selected = (selected + 1) % games.len(),
-                        0xff0d if !games.is_empty() => {
-                            result = games.get(selected).cloned();
-                            running = false;
-                        }
-                        0xff1b | 0xff08 => running = false,
-                        _ => {}
+                    let action = match symbol {
+                        0xff52 => Some(Action::Up),
+                        0xff54 => Some(Action::Down),
+                        0xff0d => Some(Action::A),
+                        0xff1b | 0xff08 => Some(Action::B),
+                        _ => None,
+                    };
+                    if let Some(action) = action {
+                        handle_action(
+                            action,
+                            games,
+                            storage,
+                            &mut browser,
+                            &mut selected,
+                            &mut notice,
+                            &mut result,
+                            &mut running,
+                        );
                     }
                 }
                 Event::Error(error) => {
@@ -230,6 +245,127 @@ pub(crate) fn choose(
     Ok(result)
 }
 
+struct Browser {
+    directory: PathBuf,
+    entries: Vec<PathBuf>,
+}
+
+impl Browser {
+    fn open(directory: &Path) -> io::Result<Self> {
+        let mut entries = fs::read_dir(directory)?
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.is_dir()
+                    || path
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .is_some_and(|ext| {
+                            ["gba", "agb", "bin"]
+                                .iter()
+                                .any(|candidate| ext.eq_ignore_ascii_case(candidate))
+                        })
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by(|a, b| {
+            b.is_dir()
+                .cmp(&a.is_dir())
+                .then_with(|| a.file_name().cmp(&b.file_name()))
+        });
+        Ok(Self {
+            directory: directory.to_owned(),
+            entries,
+        })
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_action(
+    action: Action,
+    games: &[Game],
+    storage: &StoragePaths,
+    browser: &mut Option<Browser>,
+    selected: &mut usize,
+    notice: &mut String,
+    result: &mut Option<Game>,
+    running: &mut bool,
+) {
+    let count = browser
+        .as_ref()
+        .map_or(games.len() + 1, |view| view.entries.len() + 1);
+    match selection_action(action, *selected, count) {
+        Some(SelectionAction::Move(index)) => {
+            *selected = index;
+            notice.clear();
+        }
+        Some(SelectionAction::Cancel) if browser.is_some() => {
+            *browser = None;
+            *selected = 0;
+            notice.clear();
+        }
+        Some(SelectionAction::Cancel) => *running = false,
+        Some(SelectionAction::Select(index)) => {
+            notice.clear();
+            if let Some(view) = browser.as_ref() {
+                let path = if index == 0 {
+                    view.directory
+                        .parent()
+                        .unwrap_or(&view.directory)
+                        .to_owned()
+                } else {
+                    view.entries[index - 1].clone()
+                };
+                if path.is_dir() {
+                    match Browser::open(&path) {
+                        Ok(next) => {
+                            *browser = Some(next);
+                            *selected = 0;
+                        }
+                        Err(error) => {
+                            eprintln!("Cannot open directory {}: {error}", path.display());
+                            *notice = "CANNOT OPEN DIRECTORY".into();
+                        }
+                    }
+                } else {
+                    match game_library::import(&path, storage) {
+                        Ok(game) => {
+                            *result = Some(game);
+                            *running = false;
+                        }
+                        Err(error) => {
+                            eprintln!("Cannot import {}: {error}", path.display());
+                            *notice = if error.kind() == io::ErrorKind::AlreadyExists {
+                                "ROM OR NAME ALREADY EXISTS"
+                            } else {
+                                "IMPORT FAILED SEE LOG"
+                            }
+                            .into();
+                        }
+                    }
+                }
+            } else if index == 0 {
+                let home = std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("/"));
+                match Browser::open(&home) {
+                    Ok(view) => {
+                        *browser = Some(view);
+                        *selected = 0;
+                    }
+                    Err(error) => {
+                        eprintln!("Cannot open {}: {error}", home.display());
+                        *notice = "CANNOT OPEN HOME".into();
+                    }
+                }
+            } else {
+                *result = games.get(index - 1).cloned();
+                *running = false;
+            }
+        }
+        None => {}
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_library(
     connection: &RustConnection,
@@ -241,9 +377,11 @@ fn draw_library(
     little_endian: bool,
     masks: [u32; 3],
     games: &[Game],
+    browser: Option<&Browser>,
     selected: usize,
+    notice: &str,
 ) -> Result<(), Box<dyn Error>> {
-    let pixels = library_pixels(games, selected);
+    let pixels = library_pixels(games, browser, selected, notice);
     let bytes = usize::from(bits_per_pixel) / 8;
     let pad = usize::from(scanline_pad) / 8;
     let stride = (240 * usize::from(presentation.upload_scale) * bytes).div_ceil(pad) * pad;
@@ -278,9 +416,18 @@ fn draw_library(
     Ok(())
 }
 
-fn library_pixels(games: &[Game], selected: usize) -> Vec<u32> {
+fn library_pixels(
+    games: &[Game],
+    browser: Option<&Browser>,
+    selected: usize,
+    notice: &str,
+) -> Vec<u32> {
     let mut pixels = vec![0x101820; 240 * 160];
-    let title = "GAME LIBRARY";
+    let title = if browser.is_some() {
+        "LOAD ROM"
+    } else {
+        "GAME LIBRARY"
+    };
     draw_text(
         &mut pixels,
         (240 - title.len() * 6) / 2,
@@ -293,16 +440,25 @@ fn library_pixels(games: &[Game], selected: usize) -> Vec<u32> {
     for x in 10..230 {
         pixels[30 * 240 + x] = 0xffffff;
     }
-    if games.is_empty() {
-        draw_text(&mut pixels, 58, 52, "NO GAMES FOUND", 0xffd060);
-        draw_text(&mut pixels, 22, 76, "COPY ROMS TO GAMES FOLDER", 0xffffff);
-        draw_text(&mut pixels, 42, 92, "RESTART TO RESCAN", 0x90a0b0);
-        draw_text(&mut pixels, 66, 128, "B OR ESC TO EXIT", 0x90a0b0);
-        return pixels;
-    }
-    const VISIBLE_GAMES: usize = 5;
+    let rows: Vec<String> = if let Some(view) = browser {
+        std::iter::once("(DIR) ..".to_owned())
+            .chain(view.entries.iter().map(|path| {
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                if path.is_dir() {
+                    format!("(DIR) {name}")
+                } else {
+                    name.into_owned()
+                }
+            }))
+            .collect()
+    } else {
+        std::iter::once("LOAD ROM".to_owned())
+            .chain(games.iter().map(|game| game.title.clone()))
+            .collect()
+    };
+    const VISIBLE_GAMES: usize = 4;
     let start = selected.saturating_sub(VISIBLE_GAMES - 1);
-    for (row, game) in games.iter().enumerate().skip(start).take(VISIBLE_GAMES) {
+    for (row, title) in rows.iter().enumerate().skip(start).take(VISIBLE_GAMES) {
         let y = 34 + (row - start) * 21;
         let color = if row == selected { 0xffd060 } else { 0xffffff };
         draw_text(
@@ -312,9 +468,17 @@ fn library_pixels(games: &[Game], selected: usize) -> Vec<u32> {
             if row == selected { ">" } else { " " },
             color,
         );
-        let (first_line, second_line) = title_lines(&game.title);
+        let (first_line, second_line) = title_lines(title);
         draw_text(&mut pixels, 25, y, &first_line, color);
         draw_text(&mut pixels, 25, y + 9, &second_line, color);
+    }
+    if !notice.is_empty() {
+        draw_text(&mut pixels, 12, 120, notice, 0xffd060);
+    } else if let Some(view) = browser {
+        let path = view.directory.to_string_lossy().to_ascii_uppercase();
+        let chars: Vec<char> = path.chars().collect();
+        let shown: String = chars[chars.len().saturating_sub(36)..].iter().collect();
+        draw_text(&mut pixels, 12, 120, &shown, 0x90a0b0);
     }
     draw_text(&mut pixels, 28, 136, "UP DOWN MOVE  A LOAD", 0x90a0b0);
     draw_text(&mut pixels, 72, 148, "B OR ESC BACK", 0x90a0b0);
@@ -386,7 +550,7 @@ mod tests {
 
     #[test]
     fn empty_library_screen_explains_how_to_populate_it() {
-        let pixels = super::library_pixels(&[], 0);
+        let pixels = super::library_pixels(&[], None, 0, "");
         assert_eq!(pixels.len(), 240 * 160);
         assert_ne!(pixels, vec![0x101820; 240 * 160]);
     }
@@ -428,6 +592,102 @@ mod tests {
     }
 
     #[test]
+    fn browser_navigates_imports_and_reports_conflicts() {
+        use crate::game_library::StoragePaths;
+        use std::fs;
+        let root = std::env::temp_dir().join(format!("rgba-browser-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let source = root.join("source");
+        fs::create_dir_all(source.join("folder")).expect("source folder");
+        fs::write(source.join("game.gba"), vec![1; 0xc0]).expect("ROM");
+        fs::write(source.join("ignore.txt"), b"ignored").expect("text");
+        let paths = StoragePaths {
+            data: root.join("data"),
+            config: root.join("config"),
+            games: root.join("data/games"),
+            saves: root.join("data/saves"),
+            states: root.join("data/states"),
+            settings: root.join("config/settings"),
+        };
+        paths.create().expect("storage");
+        let mut browser = Some(super::Browser::open(&source).expect("browser"));
+        assert_eq!(browser.as_ref().expect("view").entries.len(), 2);
+        let mut selected = 1;
+        let mut notice = String::new();
+        let mut result = None;
+        let mut running = true;
+        super::handle_action(
+            Action::A,
+            &[],
+            &paths,
+            &mut browser,
+            &mut selected,
+            &mut notice,
+            &mut result,
+            &mut running,
+        );
+        assert_eq!(
+            browser.as_ref().expect("view").directory,
+            source.join("folder")
+        );
+        super::handle_action(
+            Action::A,
+            &[],
+            &paths,
+            &mut browser,
+            &mut selected,
+            &mut notice,
+            &mut result,
+            &mut running,
+        );
+        assert_eq!(browser.as_ref().expect("view").directory, source);
+        selected = 2;
+        super::handle_action(
+            Action::A,
+            &[],
+            &paths,
+            &mut browser,
+            &mut selected,
+            &mut notice,
+            &mut result,
+            &mut running,
+        );
+        assert!(!running);
+        assert_eq!(
+            result.as_ref().expect("game").path,
+            paths.games.join("game.gba")
+        );
+        running = true;
+        result = None;
+        super::handle_action(
+            Action::A,
+            &[],
+            &paths,
+            &mut browser,
+            &mut selected,
+            &mut notice,
+            &mut result,
+            &mut running,
+        );
+        assert!(running);
+        assert!(result.is_none());
+        assert_eq!(notice, "ROM OR NAME ALREADY EXISTS");
+        super::handle_action(
+            Action::B,
+            &[],
+            &paths,
+            &mut browser,
+            &mut selected,
+            &mut notice,
+            &mut result,
+            &mut running,
+        );
+        assert!(browser.is_none());
+        assert!(running);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn selected_game_row_is_rendered_differently() {
         let games = [
             Game {
@@ -442,8 +702,8 @@ mod tests {
             },
         ];
         assert_ne!(
-            super::library_pixels(&games, 0),
-            super::library_pixels(&games, 1)
+            super::library_pixels(&games, None, 0, ""),
+            super::library_pixels(&games, None, 1, "")
         );
     }
 }

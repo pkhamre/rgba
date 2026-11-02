@@ -104,6 +104,50 @@ pub(crate) fn scan(paths: &StoragePaths) -> io::Result<Vec<Game>> {
     Ok(games)
 }
 
+/// Import a ROM without overwriting an existing library entry.
+pub(crate) fn import(path: &Path, paths: &StoragePaths) -> io::Result<Game> {
+    if !is_rom_path(path) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Select a GBA, AGB, or BIN file",
+        ));
+    }
+    let game = game_from_path(path)?;
+    if scan(paths)?
+        .iter()
+        .any(|existing| existing.identity == game.identity)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "ROM is already in the library",
+        ));
+    }
+    let name = path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "ROM has no filename"))?;
+    let destination = paths.games.join(name);
+    let mut source = fs::File::open(path)?;
+    let mut target = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&destination)?;
+    if let Err(error) = io::copy(&mut source, &mut target).and_then(|_| target.sync_all()) {
+        drop(target);
+        let _ = fs::remove_file(&destination);
+        return Err(error);
+    }
+    drop(target);
+    match game_from_path(&destination) {
+        Ok(imported) if imported.identity == game.identity => Ok(imported),
+        result => {
+            let _ = fs::remove_file(&destination);
+            Err(result
+                .err()
+                .unwrap_or_else(|| io::Error::other("ROM changed during import")))
+        }
+    }
+}
+
 pub(crate) fn game_from_path(path: &Path) -> io::Result<Game> {
     let bytes = fs::read(path)?;
     if bytes.len() < 0xac {
@@ -288,6 +332,43 @@ mod tests {
         assert_eq!(games[1].title, "copy");
         assert!(games[1].path.ends_with("copy.GBA"));
         assert_eq!(games[1].identity, <[u8; 32]>::from(Sha256::digest(&first)));
+    }
+
+    #[test]
+    fn import_copies_and_rejects_duplicates_and_name_conflicts() {
+        let fixture = Fixture::new();
+        let source = fixture.root.join("game.gba");
+        let bytes = rom(b"TEST", 1);
+        fs::write(&source, &bytes).expect("ROM");
+        let game = super::import(&source, &fixture.paths).expect("import");
+        assert_eq!(fs::read(&game.path).expect("copy"), bytes);
+        assert_eq!(
+            super::import(&source, &fixture.paths)
+                .expect_err("duplicate")
+                .kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        let duplicate = fixture.root.join("duplicate.agb");
+        fs::write(&duplicate, &bytes).expect("duplicate ROM");
+        assert_eq!(
+            super::import(&duplicate, &fixture.paths)
+                .expect_err("duplicate content")
+                .kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        assert!(!fixture.paths.games.join("duplicate.agb").exists());
+        fs::write(&source, rom(b"OTHER", 2)).expect("different ROM");
+        assert_eq!(
+            super::import(&source, &fixture.paths)
+                .expect_err("name conflict")
+                .kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(fs::read(&game.path).expect("original retained"), bytes);
+        let bad = fixture.root.join("bad.gba");
+        fs::write(&bad, b"short").expect("short ROM");
+        assert!(super::import(&bad, &fixture.paths).is_err());
+        assert!(!fixture.paths.games.join("bad.gba").exists());
     }
 
     #[test]

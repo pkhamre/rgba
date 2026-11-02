@@ -69,16 +69,21 @@ and keeps running. Use `--audio pipewire|pulse|alsa` to select a player or
 `--audio off` to disable audio. See [audio setup and limitations](docs/AUDIO.md).
 
 The desktop binary requires `--bios PATH`. To use the game library, omit
-`--rom` and put `.gba`, `.agb`, or `.bin` files directly in
-`$XDG_DATA_HOME/rgba/games` (default `~/.local/share/rgba/games`):
+`--rom`:
 
 ```sh
 ./rgba --bios "$HOME/.local/share/rgba/bios.bin"
 ```
 
-If the library has one game, it starts automatically. With multiple games,
-you'll see a chooser showing the ROM filenames. Use Up/Down to select, Enter to
-launch, and Escape to exit.
+The library shows ROM filenames and a **Load ROM** option. Use Up/Down and
+Enter (or the controller D-pad and A) to select. Load ROM opens a built-in
+browser starting in your home directory; select a folder to enter it, `..` to
+move up, or a `.gba`, `.agb`, or `.bin` file to import and launch it. Escape
+(or B) returns to the library. The ROM is copied into
+`$XDG_DATA_HOME/rgba/games` (default `~/.local/share/rgba/games`); its source
+is unchanged. Imports are rejected if the filename already exists or the same
+ROM content is already in the library. You can also put ROMs directly in the
+games folder; restart or return to the library to rescan.
 `./rgba --help` lists command-line options without needing a display or images.
 
 ## Controls

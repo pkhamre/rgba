@@ -49,10 +49,8 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         .map(|game| game.identity);
     let mut selected = if let Some(game) = explicit_game.clone() {
         Some(game)
-    } else if games.len() == 1 {
-        games.first().cloned()
     } else {
-        crate::library_window::choose(&args, &games, &mut gamepad)?
+        crate::library_window::choose(&args, &games, &storage, &mut gamepad)?
     };
 
     while let Some(game) = selected {
@@ -97,7 +95,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                 if !games.iter().any(|known| known.identity == game.identity) {
                     games.push(game);
                 }
-                selected = crate::library_window::choose(&args, &games, &mut gamepad)?;
+                selected = crate::library_window::choose(&args, &games, &storage, &mut gamepad)?;
             }
         }
     }
